@@ -20,6 +20,8 @@ public class PV204Applet extends javacard.framework.Applet {
     final static byte INS_SETPIN = (byte) 0x56;
     final static byte INS_RETURNDATA = (byte) 0x57;
     final static byte INS_SIGNDATA = (byte) 0x58;
+    final static byte INS_ECDHINIT = (byte) 0x59;
+    final static byte INS_ECDHSECRET = (byte) 0x60;
 
     final static short ARRAY_LENGTH = (short) 0xff;
     final static byte AES_BLOCK_LENGTH = (short) 0x16;
@@ -52,6 +54,9 @@ public class PV204Applet extends javacard.framework.Applet {
     private KeyPair m_keyPair = null;
     private Key m_privateKey = null;
     private Key m_publicKey = null;
+    
+    private KeyPair m_ECDH_keyPair = null;
+    private byte m_ECDH_secret[] = null;
 
     // TEMPORARRY ARRAY IN RAM
     private byte m_ramArray[] = null;
@@ -62,73 +67,76 @@ public class PV204Applet extends javacard.framework.Applet {
      * PV204Applet default constructor Only this class's install method should
      * create the applet object.
      */
-    protected PV204Applet(byte[] buffer, short offset, byte length) {
+    protected PV204Applet(byte[] buffer, short offset, byte length) throws ISOException {
         // data offset is used for application specific parameter.
         // initialization with default offset (AID offset).
         short dataOffset = offset;
         boolean isOP2 = false;
 
-        if (length > 9) {
-            // Install parameter detail. Compliant with OP 2.0.1.
+        
+        // Install parameter detail. Compliant with OP 2.0.1.
 
-            // | size | content
-            // |------|---------------------------
-            // |  1   | [AID_Length]
-            // | 5-16 | [AID_Bytes]
-            // |  1   | [Privilege_Length]
-            // | 1-n  | [Privilege_Bytes] (normally 1Byte)
-            // |  1   | [Application_Proprietary_Length]
-            // | 0-m  | [Application_Proprietary_Bytes]
-            // shift to privilege offset
-            dataOffset += (short) (1 + buffer[offset]);
-            // finally shift to Application specific offset
-            dataOffset += (short) (1 + buffer[dataOffset]);
+        // | size | content
+        // |------|---------------------------
+        // |  1   | [AID_Length]
+        // | 5-16 | [AID_Bytes]
+        // |  1   | [Privilege_Length]
+        // | 1-n  | [Privilege_Bytes] (normally 1Byte)
+        // |  1   | [Application_Proprietary_Length]
+        // | 0-m  | [Application_Proprietary_Bytes]
+        // shift to privilege offset
+        dataOffset += (short) (1 + buffer[offset]);
+        // finally shift to Application specific offset
+        dataOffset += (short) (1 + buffer[dataOffset]);
 
-            // go to proprietary data
-            dataOffset++;
+        /*// go to proprietary data
+        dataOffset++;*/
 
-            m_dataArray = new byte[ARRAY_LENGTH];
-            Util.arrayFillNonAtomic(m_dataArray, (short) 0, ARRAY_LENGTH, (byte) 0);
+        m_dataArray = new byte[ARRAY_LENGTH];
+        Util.arrayFillNonAtomic(m_dataArray, (short) 0, ARRAY_LENGTH, (byte) 0);
 
-            // CREATE AES KEY OBJECT
-            m_aesKey = (AESKey) KeyBuilder.buildKey(KeyBuilder.TYPE_AES, KeyBuilder.LENGTH_AES_256, false);
-            // CREATE OBJECTS FOR CBC CIPHERING
-            m_encryptCipher = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
-            m_decryptCipher = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
+        // CREATE AES KEY OBJECT
+        m_aesKey = (AESKey) KeyBuilder.buildKey(KeyBuilder.TYPE_AES, KeyBuilder.LENGTH_AES_256, false);
+        // CREATE OBJECTS FOR CBC CIPHERING
+        m_encryptCipher = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
+        m_decryptCipher = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
 
-            // CREATE RANDOM DATA GENERATORS
-            m_secureRandom = RandomData.getInstance(RandomData.ALG_SECURE_RANDOM);
+        // CREATE RANDOM DATA GENERATORS
+        m_secureRandom = RandomData.getInstance(RandomData.ALG_SECURE_RANDOM);
 
-            // TEMPORARY BUFFER USED FOR FAST OPERATION WITH MEMORY LOCATED IN RAM
-            m_ramArray = JCSystem.makeTransientByteArray((short) 260, JCSystem.CLEAR_ON_DESELECT);
+        // TEMPORARY BUFFER USED FOR FAST OPERATION WITH MEMORY LOCATED IN RAM
+        m_ramArray = JCSystem.makeTransientByteArray((short) 260, JCSystem.CLEAR_ON_DESELECT);
 
-            // SET KEY VALUE
-            m_aesKey.setKey(m_dataArray, (short) 0);
+        // SET KEY VALUE
+        m_aesKey.setKey(m_dataArray, (short) 0);
 
-            // INIT CIPHERS WITH NEW KEY
-            m_encryptCipher.init(m_aesKey, Cipher.MODE_ENCRYPT);
-            m_decryptCipher.init(m_aesKey, Cipher.MODE_DECRYPT);
+        // INIT CIPHERS WITH NEW KEY
+        m_encryptCipher.init(m_aesKey, Cipher.MODE_ENCRYPT);
+        m_decryptCipher.init(m_aesKey, Cipher.MODE_DECRYPT);
 
-            m_pin = new OwnerPIN((byte) 5, (byte) 4); // 5 tries, 4 digits in pin
-            m_pin.update(m_dataArray, (byte) 0, (byte) 4); // set initial random pin
+        m_pin = new OwnerPIN((byte) 3, (byte) 4); // 5 tries, 4 digits in pin
+        if (buffer[dataOffset] != (byte) 4) {
+            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+        }
+        m_pin.update(buffer, (byte) (dataOffset + 1), (byte) 4); // set initial random pin
 
-            // CREATE RSA KEYS AND PAIR 
-            m_keyPair = new KeyPair(KeyPair.ALG_RSA_CRT, KeyBuilder.LENGTH_RSA_2048);
-            m_keyPair.genKeyPair(); // Generate fresh key pair on-card
-            m_publicKey = m_keyPair.getPublic();
-            m_privateKey = m_keyPair.getPrivate();
-            // SIGNATURE ENGINE    
-            m_sign = Signature.getInstance(Signature.ALG_RSA_SHA_PKCS1, false);
-            // INIT WITH PRIVATE KEY
-            m_sign.init(m_privateKey, Signature.MODE_SIGN);
+        // CREATE RSA KEYS AND PAIR 
+        m_keyPair = new KeyPair(KeyPair.ALG_RSA_CRT, KeyBuilder.LENGTH_RSA_2048);
+        m_keyPair.genKeyPair(); // Generate fresh key pair on-card
+        m_publicKey = m_keyPair.getPublic();
+        m_privateKey = m_keyPair.getPrivate();
+        // SIGNATURE ENGINE    
+        m_sign = Signature.getInstance(Signature.ALG_RSA_SHA_PKCS1, false);
+        // INIT WITH PRIVATE KEY
+        m_sign.init(m_privateKey, Signature.MODE_SIGN);
 
-            // INIT HASH ENGINE
-            m_hash = MessageDigest.getInstance(MessageDigest.ALG_SHA, false);
+        // INIT HASH ENGINE
+        m_hash = MessageDigest.getInstance(MessageDigest.ALG_SHA, false);
 
-            // update flag
-            isOP2 = true;
+        // update flag
+        isOP2 = true;
 
-        } 
+         
 
         // register this instance
         register();
@@ -210,6 +218,12 @@ public class PV204Applet extends javacard.framework.Applet {
                         break;
                     case INS_SIGNDATA:
                         Sign(apdu);
+                        break;
+                    case INS_ECDHINIT:
+                        ECDHInit(apdu);
+                        break;
+                    case INS_ECDHSECRET:
+                        ECDHGetSecret(apdu);
                         break;
                     default:
                         // The INS code is not supported by the dispatcher
@@ -342,6 +356,33 @@ public class PV204Applet extends javacard.framework.Applet {
 
         // SEND OUTGOING BUFFER
         apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, randomDataLen);
+    }
+    
+    void ECDHInit(APDU apdu) {
+        byte[] apdubuf = apdu.getBuffer();
+        short dataLen = apdu.setIncomingAndReceive();
+        
+        m_ECDH_keyPair = new KeyPair(KeyPair.ALG_EC_FP, KeyBuilder.LENGTH_EC_FP_224);
+        m_ECDH_keyPair.genKeyPair();
+        
+        KeyAgreement dh = KeyAgreement.getInstance(KeyAgreement.ALG_EC_SVDP_DH, false);
+        dh.init(m_ECDH_keyPair.getPrivate());
+        
+        byte secret[] = new byte[224];
+        short len = dh.generateSecret(apdubuf, ISO7816.OFFSET_CDATA, dataLen, secret, (byte) 0);
+        
+        m_ECDH_secret = new byte[len];
+        Util.arrayCopy(secret, (short) 0, m_ECDH_secret, (short) 0, len);
+        
+        len = ((ECPublicKey) m_ECDH_keyPair.getPublic()).getW(apdubuf, ISO7816.OFFSET_CDATA);
+        
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (len));
+    }
+    
+    void ECDHGetSecret(APDU apdu) {
+        byte[] apdubuf = apdu.getBuffer();
+        Util.arrayCopy(m_ECDH_secret, (short) 0, apdubuf, (short) (ISO7816.OFFSET_CDATA), (short) m_ECDH_secret.length);
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) m_ECDH_secret.length);
     }
 
     // VERIFY PIN
