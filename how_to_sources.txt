@@ -1,4 +1,3 @@
-derive key from PIN = AES password for ECDH shares
 https://stackoverflow.com/questions/37562264/how-does-elliptic-curve-diffie-hellman-work-on-javacard-in-combination-with-jav
 https://stackoverflow.com/questions/22646792/how-does-one-convert-a-public-ec-code-point-and-curve-name-into-a-publickey
 
