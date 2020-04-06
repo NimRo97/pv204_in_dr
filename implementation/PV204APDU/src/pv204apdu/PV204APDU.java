@@ -90,6 +90,15 @@ public class PV204APDU {
         deriveSessionKey();
     }
     
+    public byte[] exchangeEcdhShares(byte[] pcEcdhShare) throws Exception {
+        byte[] command = {(byte) 0xb0, (byte) 0x59, (byte) 0x00, (byte) 0x00,
+                          (byte) pcEcdhShare.length};
+        byte[] sendData = Util.concat(command, pcEcdhShare);
+        
+        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
+        return response.getData();
+    }
+    
     //derive session key from shared ECDH secret
     private void deriveSessionKey() {
         //TODO
@@ -115,15 +124,6 @@ public class PV204APDU {
         
         System.out.println("PC   PIN: " + Util.bytesToHex(pinSecret));
         System.out.println("Card PIN: " + Util.bytesToHex(cardPin));
-    }
-    
-    public byte[] exchangeEcdhShares(byte[] pcEcdhShare) throws Exception {
-        byte[] command = {(byte) 0xb0, (byte) 0x59, (byte) 0x00, (byte) 0x00,
-                          (byte) pcEcdhShare.length};
-        byte[] sendData = Util.concat(command, pcEcdhShare);
-        
-        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
-        return response.getData();
     }
     
     public byte[] prepareKeyPair(KeyAgreement dh) throws Exception {
