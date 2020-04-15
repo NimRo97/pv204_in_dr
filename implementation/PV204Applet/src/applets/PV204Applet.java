@@ -40,9 +40,11 @@ public class PV204Applet extends javacard.framework.Applet {
     private RandomData m_secureRandom = null;
     private byte[] m_pin_data = new byte[PIN_LENGTH];
     private OwnerPIN m_pin = null;
-
     
     private byte m_ecdh_secret[] = null;
+    private AESKey m_aes_key = null;
+    private Cipher m_aes_encrypt = null;
+    private Cipher m_aes_decrypt = null;
 
     // TEMPORARRY ARRAY IN RAM
     private byte m_ramArray[] = null;
@@ -89,6 +91,9 @@ public class PV204Applet extends javacard.framework.Applet {
         }
         m_pin.update(buffer, (byte) (dataOffset + 1), (byte) PIN_LENGTH); // set initial random pin*/
 
+        m_aes_key = (AESKey) KeyBuilder.buildKey(KeyBuilder.TYPE_AES, KeyBuilder.LENGTH_AES_128, false);
+        m_aes_encrypt = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false); //TODO use padding
+        m_aes_decrypt = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
         // register this instance
         register();
     }
@@ -154,40 +159,55 @@ public class PV204Applet extends javacard.framework.Applet {
                         getPin(apdu);
                         break;
                     default:
-                        // The INS code is not supported by the dispatcher
+                        processSecuredAPDU(apdu);
+                        break;
+                }
+            } else {
+                ISOException.throwIt(ISO7816.SW_CLA_NOT_SUPPORTED);
+            }
+            
+        } catch (Exception e) {
+            ISOException.throwIt(SW_Exception);
+        }
+    }
+    
+    public void processSecuredAPDU(APDU apdu) throws ISOException {
+        
+        decryptAPDU(apdu);
+        byte[] apduBuffer = apdu.getBuffer();
+        boolean apduToSend = false;
+        
+        try {
+            // APDU instruction parser
+            if (apduBuffer[ISO7816.OFFSET_CLA] == CLA_PV204APPLET) {
+                switch (apduBuffer[ISO7816.OFFSET_INS]) {
+                    /*case INS_TODO:
+                        TODO
+                        apduToSend = true;
+                        break;*/
+                    default:
                         ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
                         break;
                 }
             } else {
                 ISOException.throwIt(ISO7816.SW_CLA_NOT_SUPPORTED);
             }
-
-            // Capture all reasonable exceptions and change into readable ones (instead of 0x6f00) 
-        } catch (ISOException e) {
-            throw e; // Our exception from code, just re-emit
-        } catch (ArrayIndexOutOfBoundsException e) {
-            ISOException.throwIt(SW_ArrayIndexOutOfBoundsException);
-        } catch (ArithmeticException e) {
-            ISOException.throwIt(SW_ArithmeticException);
-        } catch (ArrayStoreException e) {
-            ISOException.throwIt(SW_ArrayStoreException);
-        } catch (NullPointerException e) {
-            ISOException.throwIt(SW_NullPointerException);
-        } catch (NegativeArraySizeException e) {
-            ISOException.throwIt(SW_NegativeArraySizeException);
-        } catch (CryptoException e) {
-            ISOException.throwIt((short) (SW_CryptoException_prefix | e.getReason()));
-        } catch (SystemException e) {
-            ISOException.throwIt((short) (SW_SystemException_prefix | e.getReason()));
-        } catch (PINException e) {
-            ISOException.throwIt((short) (SW_PINException_prefix | e.getReason()));
-        } catch (TransactionException e) {
-            ISOException.throwIt((short) (SW_TransactionException_prefix | e.getReason()));
-        } catch (CardRuntimeException e) {
-            ISOException.throwIt((short) (SW_CardRuntimeException_prefix | e.getReason()));
+            
         } catch (Exception e) {
             ISOException.throwIt(SW_Exception);
         }
+        
+        if (apduToSend) {
+            encryptAndSendAPDU(apdu);
+        }
+    }
+    
+    public void decryptAPDU(APDU apdu) throws ISOException {
+        //TODO
+    }
+    
+    public void encryptAndSendAPDU(APDU apdu) throws ISOException {
+        //TODO
     }
 
     void clearSessionData() {
@@ -224,7 +244,11 @@ public class PV204Applet extends javacard.framework.Applet {
     
     //Derive session key from shared secret
     void deriveSessionKey() {
-        //TODO
+        byte[] iv = new byte[16]; //TODO derive instead
+        m_aes_key.setKey(m_ecdh_secret, (short) 0); //TODO derive instead
+        
+        m_aes_encrypt.init(m_aes_key, Cipher.MODE_ENCRYPT, iv, (short) 0, (short) 16);
+        m_aes_decrypt.init(m_aes_key, Cipher.MODE_DECRYPT, iv, (short) 0, (short) 16);
     }
     
     //only for debugging
