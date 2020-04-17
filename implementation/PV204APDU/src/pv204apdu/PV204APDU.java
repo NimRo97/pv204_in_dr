@@ -17,6 +17,7 @@ import java.security.spec.ECPublicKeySpec;
 import javax.crypto.Cipher;
 import javax.crypto.KeyAgreement;
 import javax.crypto.spec.IvParameterSpec;
+import java.util.Arrays;
 import javax.crypto.spec.SecretKeySpec;
 
 import javax.smartcardio.CommandAPDU;
@@ -36,6 +37,7 @@ public class PV204APDU {
     final CardManager cardMngr = new CardManager(true, APPLET_AID_BYTE);
     byte[] ecdhSecret = null;
     byte[] pinSecret = null;
+    byte [] hashedPIN = null;
     
     Cipher aes_encrypt = null;
     Cipher aes_decrypt = null;
@@ -83,6 +85,7 @@ public class PV204APDU {
         System.out.println(" Done.");
         
         pinSecret = pin;
+        hashedPIN = hashPIN(pin);
     }
     
     public void startEcdhSession() throws Exception {
@@ -91,9 +94,11 @@ public class PV204APDU {
         
         //These are the bytes to send to card
         byte[] pcEcdhShare = prepareKeyPair(dh);
+        byte[] encPcEcdhShare;
         
         //send PC ECDH share and receive card ECDH share
-        byte[] cardEcdhShare = exchangeEcdhShares(pcEcdhShare);
+        byte[] encCardEcdhShare = sendECDHInitCommand(pcEcdhShare);
+        byte[] cardEcdhShare = encCardEcdhShare;
         
         ECPublicKey cardPublicKey = extractCardPublicKey(cardEcdhShare);
         dh.doPhase(cardPublicKey, true);
@@ -105,12 +110,10 @@ public class PV204APDU {
         deriveSessionKey();
     }
     
-    public byte[] exchangeEcdhShares(byte[] pcEcdhShare) throws Exception {
-        byte[] command = {(byte) 0xb0, (byte) 0x59, (byte) 0x00, (byte) 0x00,
-                          (byte) pcEcdhShare.length};
-        byte[] sendData = Util.concat(command, pcEcdhShare);
+    public byte[] sendECDHInitCommand(byte[] pcEcdhShare) throws Exception {
+        byte[] command = {(byte) 0xb0, (byte) 0x62, (byte) 0x00, (byte) 0x00};
         
-        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
+        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(command));
         return response.getData();
     }
     
@@ -216,4 +219,27 @@ public class PV204APDU {
         return keyGen.generateKeyPair();
     }
     
+    private byte[] hashPIN(byte[] pin) throws Exception {
+        
+        MessageDigest md = MessageDigest.getInstance("SHA-1");
+        byte[] key = md.digest(pin);
+        return Arrays.copyOf(key, 16);
+    }
+    
+    public byte[] encDataByHashPIN(byte[] data, byte[] key) throws Exception {
+
+        SecretKeySpec aesKey = new SecretKeySpec(key, "AES");
+        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, aesKey);
+        
+        return cipher.doFinal(data);
+    }
+    public byte[] decDataByHashPIN(byte[] data, byte[] key) throws Exception {
+
+        SecretKeySpec aesKey = new SecretKeySpec(key, "AES");
+        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        cipher.init(Cipher.DECRYPT_MODE, aesKey);
+        
+        return cipher.doFinal(data);
+    }
 }

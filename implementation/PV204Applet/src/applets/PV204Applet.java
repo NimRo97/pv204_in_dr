@@ -1,5 +1,6 @@
 package applets;
 
+import java.util.Arrays;
 import javacard.framework.*;
 import javacard.security.*;
 import javacardx.crypto.*;
@@ -10,11 +11,13 @@ public class PV204Applet extends javacard.framework.Applet {
     final static byte CLA_PV204APPLET = (byte) 0xB0;
 
     // INSTRUCTIONS
-    final static byte INS_ECDHINIT = (byte) 0x59;
+    final static byte INS_ECDHINIT_OLD = (byte) 0x59; // deprected
     final static byte INS_GETSECRET = (byte) 0x60;
     final static byte INS_GETPIN = (byte) 0x61;
     
     final static byte INS_MARCO = (byte) 0x70;
+    final static byte INS_ECDHINIT = (byte) 0x62;
+    final static byte INS_ECDHCHALLENGE = (byte) 0x63;
 
     final static short ARRAY_LENGTH = (short) 0xff;
     final static byte AES_BLOCK_LENGTH = (short) 0x16;
@@ -42,7 +45,8 @@ public class PV204Applet extends javacard.framework.Applet {
     private RandomData m_secureRandom = null;
     private byte[] m_pin_data = new byte[PIN_LENGTH];
     private OwnerPIN m_pin = null;
-    
+    private byte[] hashedPIN = null;
+
     private byte m_ecdh_secret[] = null;
     private AESKey m_aes_key = null;
     private Cipher m_aes_encrypt = null;
@@ -84,6 +88,8 @@ public class PV204Applet extends javacard.framework.Applet {
         // CREATE RANDOM DATA GENERATORS
         m_secureRandom = RandomData.getInstance(RandomData.ALG_SECURE_RANDOM);
         //m_secureRandom.generateData(m_dataArray, (short) 0, (short) 32);
+        
+        hashedPIN = hashPIN(m_pin_data);
 
         // TEMPORARY BUFFER USED FOR FAST OPERATION WITH MEMORY LOCATED IN RAM
         m_ramArray = JCSystem.makeTransientByteArray((short) 260, JCSystem.CLEAR_ON_DESELECT);
@@ -117,6 +123,7 @@ public class PV204Applet extends javacard.framework.Applet {
      * @param bArray the array containing installation parameters
      * @param bOffset the starting offset in bArray
      * @param bLength the length in bytes of the data parameter in bArray
+     * @throws java.lang.Exception
      */
     public static void install(byte[] bArray, short bOffset, byte bLength) throws ISOException {
         // applet  instance creation 
@@ -161,8 +168,8 @@ public class PV204Applet extends javacard.framework.Applet {
             // APDU instruction parser
             if (apduBuffer[ISO7816.OFFSET_CLA] == CLA_PV204APPLET) {
                 switch (apduBuffer[ISO7816.OFFSET_INS]) {
-                    case INS_ECDHINIT:
-                        ECDHInit(apdu);
+                    case INS_ECDHINIT_OLD:
+                        ECDHInit_old(apdu);
                         deriveSessionKey();
                         break;
                     case INS_GETSECRET:
@@ -171,6 +178,16 @@ public class PV204Applet extends javacard.framework.Applet {
                     case INS_GETPIN:
                         getPin(apdu);
                         break;
+                    case INS_ECDHINIT:
+                        ECDHInit(apdu);
+                        deriveSessionKey();
+                        break;
+                    case INS_ECDHCHALLENGE:
+                        ECDHSolveChallenge(apdu);
+                        deriveSessionKey();
+                        break;
+                        
+                        
                     default:
                         processSecuredAPDU(apdu);
                         break;
@@ -260,7 +277,7 @@ public class PV204Applet extends javacard.framework.Applet {
         m_secureRandom.generateData(m_ramArray, (short) 0, (short) m_ramArray.length);
     }
     
-    void ECDHInit(APDU apdu) {
+    void ECDHInit_old(APDU apdu) {
         byte[] apdubuf = apdu.getBuffer();
         short dataLen = apdu.setIncomingAndReceive();
         
@@ -283,6 +300,40 @@ public class PV204Applet extends javacard.framework.Applet {
         
         Util.arrayCopy(card_ecdh_share, (short) 0, apdubuf, ISO7816.OFFSET_CDATA, (short) 57);
         apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (len));
+    }
+    
+    void ECDHInit(APDU apdu) throws Exception {
+        byte[] apdubuf = apdu.getBuffer();
+        apdu.setIncomingAndReceive();
+        
+        KeyPair m_ECDH_keyPair = new KeyPair(KeyPair.ALG_EC_FP, KeyBuilder.LENGTH_EC_FP_224);
+        m_ECDH_keyPair.genKeyPair();
+        
+        KeyAgreement dh = KeyAgreement.getInstance(KeyAgreement.ALG_EC_SVDP_DH, false);
+        dh.init(m_ECDH_keyPair.getPrivate());
+        
+        //bytes to send to PC
+        byte[] card_ecdh_share = new byte[57];
+        short len = ((ECPublicKey) m_ECDH_keyPair.getPublic()).getW(card_ecdh_share, (short) 0);
+        
+        byte[] enc_card_ecdh_share = new byte[64]; // aes output size
+        enc_card_ecdh_share = encDataByHashPIN(card_ecdh_share, hashedPIN);
+        
+        Util.arrayCopy(card_ecdh_share, (short) 0, apdubuf, ISO7816.OFFSET_CDATA, (short) 64);
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (len));
+    }
+    
+    void ECDHSolveChallenge(APDU apdu) throws Exception {
+        byte[] apdubuf = apdu.getBuffer();
+        short dataLen = apdu.setIncomingAndReceive();
+        
+        byte[] enc_pc_ecdh_share = new byte[dataLen];
+        Util.arrayCopy(apdubuf, ISO7816.OFFSET_CDATA, enc_pc_ecdh_share, (short) 0, dataLen);
+        byte[] pc_ecdh_share = decDataByHashPIN(enc_pc_ecdh_share, hashedPIN, (short) enc_pc_ecdh_share.length);
+        
+        //decrypt challenge with private key
+
+
     }
     
     //Derive session key from shared secret
@@ -310,6 +361,37 @@ public class PV204Applet extends javacard.framework.Applet {
         byte[] apdubuf = apdu.getBuffer();
         Util.arrayCopy(m_pin_data, (short) 0, apdubuf, (short) (ISO7816.OFFSET_CDATA), (short) m_pin_data.length);
         apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) m_pin_data.length);
+    }
+    
+    private byte[] hashPIN(byte[] pin) throws ISOException {
+        
+        MessageDigest md = MessageDigest.getInstance(MessageDigest.ALG_SHA, false);
+        byte[] hashed = null;
+        md.doFinal(pin, (short) 0, (short) 4, hashed, (short) 0);
+        return Arrays.copyOf(hashed, 16);
+    }
+    
+    public byte[] encDataByHashPIN(byte[] data, byte[] key) throws ISOException {
+
+        AESKey aesKey = (AESKey) KeyBuilder.buildKey(KeyBuilder.TYPE_AES, KeyBuilder.LENGTH_AES_128, false);
+        aesKey.setKey(key, (short) 0);
+        Cipher cipher = Cipher.getInstance(Cipher.ALG_AES_CBC_PKCS5, false);
+        cipher.init(aesKey, Cipher.MODE_ENCRYPT);
+        
+        byte[] encrypted = null;
+        cipher.doFinal(data, (short) 0, (short) 16, encrypted, (short) 0);
+        return encrypted;
+    }
+    
+    public byte[] decDataByHashPIN(byte[] data, byte[] key, short dataLength) {
+        AESKey aesKey = (AESKey) KeyBuilder.buildKey(KeyBuilder.TYPE_AES, KeyBuilder.LENGTH_AES_128, false);
+        aesKey.setKey(key, (short) 0);
+        Cipher cipher = Cipher.getInstance(Cipher.ALG_AES_CBC_PKCS5, false);
+        cipher.init(aesKey, Cipher.MODE_DECRYPT);
+        
+        byte[] encrypted = null;
+        cipher.doFinal(data, (short) 0, dataLength, encrypted, (short) 0);
+        return encrypted;
     }
 
 }
