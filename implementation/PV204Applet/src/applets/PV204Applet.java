@@ -13,8 +13,10 @@ public class PV204Applet extends javacard.framework.Applet {
     final static byte INS_ECDHINIT = (byte) 0x59;
     final static byte INS_GETSECRET = (byte) 0x60;
     final static byte INS_GETPIN = (byte) 0x61;
+    
+    final static byte INS_MARCO = (byte) 0x70;
 
-    final static short ARRAY_LENGTH = (short) 0xff;
+    final static short ARRAY_LENGTH = (short) 0x1ff;
     final static byte AES_BLOCK_LENGTH = (short) 0x16;
 
     final static short SW_BAD_TEST_DATA_LEN = (short) 0x6680;
@@ -79,6 +81,7 @@ public class PV204Applet extends javacard.framework.Applet {
 
         // CREATE RANDOM DATA GENERATORS
         m_secureRandom = RandomData.getInstance(RandomData.ALG_SECURE_RANDOM);
+        //m_secureRandom.generateData(m_dataArray, (short) 0, (short) 32);
 
         // TEMPORARY BUFFER USED FOR FAST OPERATION WITH MEMORY LOCATED IN RAM
         m_ramArray = JCSystem.makeTransientByteArray((short) 260, JCSystem.CLEAR_ON_DESELECT);
@@ -92,8 +95,14 @@ public class PV204Applet extends javacard.framework.Applet {
         m_pin.update(buffer, (byte) (dataOffset + 1), (byte) PIN_LENGTH); // set initial random pin*/
 
         m_aes_key = (AESKey) KeyBuilder.buildKey(KeyBuilder.TYPE_AES, KeyBuilder.LENGTH_AES_128, false);
-        m_aes_encrypt = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false); //TODO use padding
+        m_aes_key.setKey(m_dataArray, (short) 0);
+        m_aes_encrypt = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
         m_aes_decrypt = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
+        
+        //does not work???
+        //m_aes_encrypt = Cipher.getInstance(Cipher.ALG_AES_CBC_PKCS5, false);
+        //m_aes_decrypt = Cipher.getInstance(Cipher.ALG_AES_CBC_PKCS5, false);
+        
         // register this instance
         register();
     }
@@ -176,15 +185,16 @@ public class PV204Applet extends javacard.framework.Applet {
         decryptAPDU(apdu);
         byte[] apduBuffer = apdu.getBuffer();
         boolean apduToSend = false;
+        short dataLen = 0;
         
         try {
             // APDU instruction parser
             if (apduBuffer[ISO7816.OFFSET_CLA] == CLA_PV204APPLET) {
                 switch (apduBuffer[ISO7816.OFFSET_INS]) {
-                    /*case INS_TODO:
-                        TODO
+                    case INS_MARCO:
+                        dataLen = marcoPolo(apdu);
                         apduToSend = true;
-                        break;*/
+                        break;
                     default:
                         ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
                         break;
@@ -198,16 +208,43 @@ public class PV204Applet extends javacard.framework.Applet {
         }
         
         if (apduToSend) {
-            encryptAndSendAPDU(apdu);
+            encryptAndSendAPDU(apdu, dataLen);
         }
     }
     
     public void decryptAPDU(APDU apdu) throws ISOException {
-        //TODO
+        byte[] apdubuf = apdu.getBuffer();
+        short dataLen = apdu.setIncomingAndReceive();
+        if (dataLen % 16 != 0) {
+            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH); 
+        }
+        m_aes_decrypt.doFinal(apdubuf, ISO7816.OFFSET_CDATA, dataLen, apdubuf, ISO7816.OFFSET_CDATA);
     }
     
-    public void encryptAndSendAPDU(APDU apdu) throws ISOException {
-        //TODO
+    public void encryptAndSendAPDU(APDU apdu, short dataLen) throws ISOException {
+        byte[] apdubuf = apdu.getBuffer();
+        short nearest = (short) (((dataLen + 16 - 1) / 16 ) * 16);
+        Util.arrayFillNonAtomic(apdubuf, (short) (ISO7816.OFFSET_CDATA + dataLen),
+        (short) (nearest - dataLen), (byte) 0x00);
+        
+        m_aes_encrypt.doFinal(apdubuf, ISO7816.OFFSET_CDATA, nearest, apdubuf, ISO7816.OFFSET_CDATA);
+        
+        
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, nearest);
+    }
+    
+    short marcoPolo(APDU apdu) throws ISOException {
+        byte[] apdubuf = apdu.getBuffer();
+        byte[] marco = new byte[] {0x6d, 0x61, 0x72, 0x63, 0x6f};
+        byte[] polo = new byte[] {0x70, 0x6f, 0x6c, 0x6f};
+        
+        if (Util.arrayCompare(apdubuf, ISO7816.OFFSET_CDATA, marco, (short) 0, (short) 5) != 0) {
+            ISOException.throwIt(ISO7816.SW_WRONG_DATA);
+        }
+
+        Util.arrayCopy(polo, (short) 0, apdubuf, ISO7816.OFFSET_CDATA, (short) polo.length);
+        
+        return (short) polo.length;
     }
 
     void clearSessionData() {
@@ -245,6 +282,11 @@ public class PV204Applet extends javacard.framework.Applet {
     //Derive session key from shared secret
     void deriveSessionKey() {
         byte[] iv = new byte[16]; //TODO derive instead
+        Util.arrayFillNonAtomic(iv, (short) 0, (short) 16, (byte) 0);
+        
+        //throws exception for some reason
+        //Util.arrayFill(iv, (short) 0, (short) 16, (byte) 0);
+        
         m_aes_key.setKey(m_ecdh_secret, (short) 0); //TODO derive instead
         
         m_aes_encrypt.init(m_aes_key, Cipher.MODE_ENCRYPT, iv, (short) 0, (short) 16);
