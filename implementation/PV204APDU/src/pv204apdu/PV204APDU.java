@@ -115,7 +115,7 @@ public class PV204APDU {
     }
     
     //derive session key from shared ECDH secret
-    //TODO derive key, use padding
+    //TODO use padding
     private void deriveSessionKey() throws Exception {
         
         MessageDigest md = MessageDigest.getInstance("SHA-256");
@@ -124,10 +124,10 @@ public class PV204APDU {
         SecretKeySpec aesKeySpec = new SecretKeySpec(derived, 0, 16, "AES");
         IvParameterSpec ivSpec = new IvParameterSpec(derived, 16, 16);
         
-        aes_encrypt = Cipher.getInstance("AES/CBC/NoPadding");
+        aes_encrypt = Cipher.getInstance("AES/CBC/PKCS5Padding");
         aes_encrypt.init(Cipher.ENCRYPT_MODE, aesKeySpec, ivSpec);
         
-        aes_decrypt = Cipher.getInstance("AES/CBC/NoPadding");
+        aes_decrypt = Cipher.getInstance("AES/CBC/PKCS5Padding");
         aes_decrypt.init(Cipher.DECRYPT_MODE, aesKeySpec, ivSpec);
     }
     
