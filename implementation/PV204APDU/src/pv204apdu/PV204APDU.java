@@ -5,6 +5,7 @@ import cardTools.CardManager;
 import cardTools.RunConfig;
 import cardTools.Util;
 import java.math.BigInteger;
+import java.security.InvalidKeyException;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -98,32 +99,29 @@ public class PV204APDU {
         //prepare arrays for shared keys
         byte[] pcEcdhShare = prepareKeyPair(dh);
         byte[] encPcEcdhShare = new byte[64];
-        byte[] cardEcdhShare = new byte[64];
-        byte[] encCardEcdhShare = new byte[69];
+        byte[] cardEcdhShare = new byte[57];
+        byte[] encCardEcdhShare = new byte[64];
         
         
         //prompt card to start key exchange via PAKE protocol
         encCardEcdhShare = sendECDHInitCommand();
-
         cardEcdhShare = decDataByHashPIN(encCardEcdhShare, hashedPIN);
-                System.out.println("im here");
-
-
 
         //create chalenge
         SecureRandom random = new SecureRandom();
         byte[] challenge = new byte[16];
         random.nextBytes(challenge);
+        System.out.printf("pc card: %s\n", cardTools.Util.toHex(cardEcdhShare), cardEcdhShare.length);
 
         ECPublicKey cardPublicKey = extractCardPublicKey(cardEcdhShare);
 
         dh.doPhase(cardPublicKey, true);
         byte[] derivedSecret = dh.generateSecret();
-        //here must be deriving of a session key
-        // and encrypting challenge with it
-
         MessageDigest md = MessageDigest.getInstance("SHA");
         ecdhSecret = md.digest(derivedSecret);
+
+
+
         
         deriveSessionKey();
     }
@@ -270,7 +268,6 @@ public class PV204APDU {
         Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
 
         cipher.init(Cipher.DECRYPT_MODE, AESKey, new IvParameterSpec(new byte[16]));
-
         return cipher.doFinal(data);
 
     }

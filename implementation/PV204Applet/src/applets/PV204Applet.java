@@ -318,10 +318,11 @@ public class PV204Applet extends javacard.framework.Applet {
         //bytes to send to PC
         byte[] card_ecdh_share = new byte[57];
         short len = ((ECPublicKey) m_ECDH_keyPair.getPublic()).getW(card_ecdh_share, (short) 0);
+                System.out.printf("aplet card: %s\n", cardTools.Util.toHex(card_ecdh_share),
+                card_ecdh_share.length);
  
         byte[] enc_card_ecdh_share = new byte[64]; // aes output size
         enc_card_ecdh_share = encDataByHashPIN(card_ecdh_share, hashedPIN, (short) 57);
-
 
         Util.arrayCopy(enc_card_ecdh_share, (short) 0, apdubuf, ISO7816.OFFSET_CDATA, (short) 64);
 
@@ -385,15 +386,16 @@ public class PV204Applet extends javacard.framework.Applet {
         
         byte[] aesICV = new byte[16];
         
-        byte[] paddedData = new byte[64 + ISO7816.OFFSET_CDATA];
+        byte[] paddedData = new byte[64];
         short nearest = (short) (dataLen + 16 - (dataLen % 16));
-        Util.arrayFillNonAtomic(paddedData, (short) (ISO7816.OFFSET_CDATA + dataLen),
+        Util.arrayCopy(data, (short) 0, paddedData, (short) 0, dataLen);
+        Util.arrayFillNonAtomic(paddedData, (short) dataLen,
         (short) (nearest - dataLen), (byte) (16 - dataLen % 16));
 
         Cipher ciph;
         ciph = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
         ciph.init(aesKey, Cipher.MODE_ENCRYPT, aesICV, (short) 0, (short) 16);
-        ciph.doFinal(paddedData, ISO7816.OFFSET_CDATA, nearest, paddedData, ISO7816.OFFSET_CDATA);
+        ciph.doFinal(paddedData, (short) 0, nearest, paddedData, (short) 0);
 
         return paddedData;
     }
