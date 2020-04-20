@@ -102,7 +102,6 @@ public class PV204Applet extends javacard.framework.Applet {
         m_secureRandom = RandomData.getInstance(RandomData.ALG_SECURE_RANDOM);
         //m_secureRandom.generateData(m_dataArray, (short) 0, (short) 32);
         
-        hashedPIN = hashPIN(m_pin_data);
         System.out.println(" Initializing...");
 
         // TEMPORARY BUFFER USED FOR FAST OPERATION WITH MEMORY LOCATED IN RAM
@@ -126,6 +125,8 @@ public class PV204Applet extends javacard.framework.Applet {
         //m_aes_decrypt = Cipher.getInstance(Cipher.ALG_AES_CBC_PKCS5, false);
         
         m_hash = MessageDigest.getInstance(MessageDigest.ALG_SHA_256, false);
+        hashedPIN = hashPIN(m_pin_data);
+
         
         // register this instance
         register();
@@ -182,7 +183,6 @@ public class PV204Applet extends javacard.framework.Applet {
                         break;
                     case INS_ECDHINIT:
                         ECDHInit(apdu);
-                        deriveSessionKey();
                         break;
                     case INS_ECDHCHALLENGE:
                         ECDHSolveChallenge(apdu);
@@ -322,12 +322,10 @@ public class PV204Applet extends javacard.framework.Applet {
         byte[] enc_card_ecdh_share = new byte[64]; // aes output size
         enc_card_ecdh_share = encDataByHashPIN(card_ecdh_share, hashedPIN, (short) 57);
 
-        Util.arrayCopy(card_ecdh_share, (short) 0, apdubuf, ISO7816.OFFSET_CDATA, (short) 57);
-        //System.out.println("xxxxxxxxxxxxx");
 
-        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (len));
-               // System.out.println("ecdh init");
+        Util.arrayCopy(enc_card_ecdh_share, (short) 0, apdubuf, ISO7816.OFFSET_CDATA, (short) 64);
 
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (64));
     }
     
     void ECDHSolveChallenge(APDU apdu) throws Exception {
@@ -374,26 +372,30 @@ public class PV204Applet extends javacard.framework.Applet {
     private byte[] hashPIN(byte[] pin) throws ISOException {
         
         MessageDigest md = MessageDigest.getInstance(MessageDigest.ALG_SHA, false);
-        byte[] hashed = new byte[160];
+        byte[] hashed = new byte[20];
         md.doFinal(pin, (short) 0, (short) 4, hashed, (short) 0);
         return Arrays.copyOf(hashed, 16);
 
     }
     
-    public byte[] encDataByHashPIN(byte[] data, byte[] key, short dataLength) throws ISOException, CryptoException {
+    public byte[] encDataByHashPIN(byte[] data, byte[] key, short dataLen) throws ISOException, CryptoException {
 
         AESKey aesKey = (AESKey) KeyBuilder.buildKey(KeyBuilder.TYPE_AES, KeyBuilder.LENGTH_AES_128, false);
         aesKey.setKey(key, (short) 0);
         
         byte[] aesICV = new byte[16];
+        
+        byte[] paddedData = new byte[64 + ISO7816.OFFSET_CDATA];
+        short nearest = (short) (dataLen + 16 - (dataLen % 16));
+        Util.arrayFillNonAtomic(paddedData, (short) (ISO7816.OFFSET_CDATA + dataLen),
+        (short) (nearest - dataLen), (byte) (16 - dataLen % 16));
 
         Cipher ciph;
-        ciph = Cipher.getInstance(Cipher.CIPHER_AES_CBC, Cipher.PAD_PKCS5, true);
+        ciph = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
         ciph.init(aesKey, Cipher.MODE_ENCRYPT, aesICV, (short) 0, (short) 16);
+        ciph.doFinal(paddedData, ISO7816.OFFSET_CDATA, nearest, paddedData, ISO7816.OFFSET_CDATA);
 
-        byte[] encrypted = new byte[64];
-        ciph.doFinal(data, (short) 0, (short) dataLength, encrypted, (short) 0);
-        return encrypted;
+        return paddedData;
     }
     
     public byte[] decDataByHashPIN(byte[] data, byte[] key, short dataLength) {

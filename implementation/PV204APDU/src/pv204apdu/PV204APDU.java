@@ -19,6 +19,7 @@ import javax.crypto.Cipher;
 import javax.crypto.KeyAgreement;
 import javax.crypto.spec.IvParameterSpec;
 import java.util.Arrays;
+import javacard.framework.ISO7816;
 import javax.crypto.spec.SecretKeySpec;
 import javax.smartcardio.CommandAPDU;
 import javax.smartcardio.ResponseAPDU;
@@ -94,14 +95,22 @@ public class PV204APDU {
 
         KeyAgreement dh = KeyAgreement.getInstance("ECDH");
         
-        //These are the bytes to send to card
+        //prepare arrays for shared keys
         byte[] pcEcdhShare = prepareKeyPair(dh);
         byte[] encPcEcdhShare = new byte[64];
+        byte[] cardEcdhShare = new byte[64];
+        byte[] encCardEcdhShare = new byte[69];
         
-        //send PC ECDH share and receive card ECDH share
-        byte[] encCardEcdhShare = sendECDHInitCommand();
-        byte[] cardEcdhShare = decDataByHashPIN(encCardEcdhShare, hashedPIN);
+        
+        //prompt card to start key exchange via PAKE protocol
+        encCardEcdhShare = sendECDHInitCommand();
 
+        cardEcdhShare = decDataByHashPIN(encCardEcdhShare, hashedPIN);
+                System.out.println("im here");
+
+
+
+        //create chalenge
         SecureRandom random = new SecureRandom();
         byte[] challenge = new byte[16];
         random.nextBytes(challenge);
@@ -263,5 +272,6 @@ public class PV204APDU {
         cipher.init(Cipher.DECRYPT_MODE, AESKey, new IvParameterSpec(new byte[16]));
 
         return cipher.doFinal(data);
+
     }
 }
