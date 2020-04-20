@@ -17,7 +17,7 @@ public class PV204Applet extends javacard.framework.Applet {
     
     final static byte INS_MARCO = (byte) 0x70;
     final static byte INS_ECDHINIT = (byte) 0x62;
-    final static byte INS_ECDHCHALLENGE = (byte) 0x63;
+    final static byte INS_SOLVE_CHALLENGE = (byte) 0x63;
 
     final static short ARRAY_LENGTH = (short) 0xff;
     final static byte AES_BLOCK_LENGTH = (short) 0x16;
@@ -65,6 +65,7 @@ public class PV204Applet extends javacard.framework.Applet {
     private Cipher m_aes_decrypt = null;
     
     private MessageDigest m_hash = null;
+    private KeyAgreement dh = null;
 
     // TEMPORARRY ARRAY IN RAM
     private byte m_ramArray[] = null;
@@ -126,8 +127,8 @@ public class PV204Applet extends javacard.framework.Applet {
         
         m_hash = MessageDigest.getInstance(MessageDigest.ALG_SHA_256, false);
         hashedPIN = hashPIN(m_pin_data);
-
         
+                
         // register this instance
         register();
     }
@@ -182,11 +183,12 @@ public class PV204Applet extends javacard.framework.Applet {
                         getPin(apdu);
                         break;
                     case INS_ECDHINIT:
-                        ECDHInit(apdu);
+                        dh = KeyAgreement.getInstance(KeyAgreement.ALG_EC_SVDP_DH, false);
+                        ECDHInit(apdu, dh);
                         break;
-                    case INS_ECDHCHALLENGE:
-                        ECDHSolveChallenge(apdu);
-                        deriveSessionKey();
+                    case INS_SOLVE_CHALLENGE:
+                        ECDHSolveChallenge(apdu, dh);
+                        
                         break;
                         
                         
@@ -304,7 +306,7 @@ public class PV204Applet extends javacard.framework.Applet {
         apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (len));
     }
     
-    void ECDHInit(APDU apdu) throws ISOException, CryptoException {
+    void ECDHInit(APDU apdu, KeyAgreement dh) throws ISOException, CryptoException {
 
         byte[] apdubuf = apdu.getBuffer();
         apdu.setIncomingAndReceive();
@@ -312,14 +314,11 @@ public class PV204Applet extends javacard.framework.Applet {
         KeyPair m_ECDH_keyPair = new KeyPair(KeyPair.ALG_EC_FP, KeyBuilder.LENGTH_EC_FP_224);
         m_ECDH_keyPair.genKeyPair();
         
-        KeyAgreement dh = KeyAgreement.getInstance(KeyAgreement.ALG_EC_SVDP_DH, false);
         dh.init(m_ECDH_keyPair.getPrivate());
 
         //bytes to send to PC
         byte[] card_ecdh_share = new byte[57];
         short len = ((ECPublicKey) m_ECDH_keyPair.getPublic()).getW(card_ecdh_share, (short) 0);
-                System.out.printf("aplet card: %s\n", cardTools.Util.toHex(card_ecdh_share),
-                card_ecdh_share.length);
  
         byte[] enc_card_ecdh_share = new byte[64]; // aes output size
         enc_card_ecdh_share = encDataByHashPIN(card_ecdh_share, hashedPIN, (short) 57);
@@ -329,16 +328,30 @@ public class PV204Applet extends javacard.framework.Applet {
         apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (64));
     }
     
-    void ECDHSolveChallenge(APDU apdu) throws Exception {
+    void ECDHSolveChallenge(APDU apdu, KeyAgreement dh) throws Exception {
         byte[] apdubuf = apdu.getBuffer();
         short dataLen = apdu.setIncomingAndReceive();
         
-        byte[] enc_pc_ecdh_share = new byte[dataLen];
-        Util.arrayCopy(apdubuf, ISO7816.OFFSET_CDATA, enc_pc_ecdh_share, (short) 0, dataLen);
-        byte[] pc_ecdh_share = decDataByHashPIN(enc_pc_ecdh_share, hashedPIN, (short) enc_pc_ecdh_share.length);
+        byte[] recData = new byte[dataLen];
+        Util.arrayCopy(apdubuf, ISO7816.OFFSET_CDATA, recData, (short) 0, dataLen);
+
+        byte[] decryptedData = decDataByHashPIN(recData, hashedPIN, (short) recData.length);
+        byte[] pc_ecdh_share = new byte[59];
+        Util.arrayCopy(decryptedData, (short) 0, pc_ecdh_share, (short) 0, (short) 59);
+        m_ecdh_secret = new byte[20];
+        dh.generateSecret(pc_ecdh_share, (short) 0, (short) pc_ecdh_share.length, m_ecdh_secret, (byte) 0);
+        deriveSessionKey();
         
-        //decrypt challenge with private key
-        //send own challenge
+        byte[] encPcChallenge = new byte[32];
+        byte [] pcChallenge = new byte[32];
+        Util.arrayCopy(decryptedData, (short) 59, encPcChallenge, (short) 0, (short) 32);
+
+        m_aes_decrypt.doFinal(encPcChallenge, (short) 0, (short) 32, pcChallenge, (short) 0);
+        //System.out.printf("aplet:: pc challenge: %s\n", cardTools.Util.toHex(pcChallenge), pcChallenge.length);
+        Util.arrayCopy(pcChallenge, (short) 0, apdubuf, ISO7816.OFFSET_CDATA, (short) 32);
+
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (32));
+        
 
 
     }
@@ -392,26 +405,25 @@ public class PV204Applet extends javacard.framework.Applet {
         Util.arrayFillNonAtomic(paddedData, (short) dataLen,
         (short) (nearest - dataLen), (byte) (16 - dataLen % 16));
 
-        Cipher ciph;
-        ciph = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
+        Cipher ciph = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
         ciph.init(aesKey, Cipher.MODE_ENCRYPT, aesICV, (short) 0, (short) 16);
         ciph.doFinal(paddedData, (short) 0, nearest, paddedData, (short) 0);
 
         return paddedData;
     }
     
-    public byte[] decDataByHashPIN(byte[] data, byte[] key, short dataLength) {
+    public byte[] decDataByHashPIN(byte[] data, byte[] key, short dataLength) throws ISOException, CryptoException {
         AESKey aesKey = (AESKey) KeyBuilder.buildKey(KeyBuilder.TYPE_AES, KeyBuilder.LENGTH_AES_128, false);
         aesKey.setKey(key, (short) 0);
         
         byte[] aesICV = new byte[16];
         
-        Cipher cipher = Cipher.getInstance(Cipher.ALG_AES_CBC_PKCS5, false);
+        Cipher cipher = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
         cipher.init(aesKey, Cipher.MODE_DECRYPT, aesICV, (short) 0, (short) 16);
         
-        byte[] encrypted = null;
-        cipher.doFinal(data, (short) 0, dataLength, encrypted, (short) 0);
-        return encrypted;
+        byte[] decrypted = new byte[96];
+        cipher.doFinal(data, (short) 0, dataLength, decrypted, (short) 0);
+        return decrypted;
     }
 
 }

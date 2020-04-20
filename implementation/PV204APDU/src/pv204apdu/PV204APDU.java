@@ -107,12 +107,6 @@ public class PV204APDU {
         encCardEcdhShare = sendECDHInitCommand();
         cardEcdhShare = decDataByHashPIN(encCardEcdhShare, hashedPIN);
 
-        //create chalenge
-        SecureRandom random = new SecureRandom();
-        byte[] challenge = new byte[16];
-        random.nextBytes(challenge);
-        System.out.printf("pc card: %s\n", cardTools.Util.toHex(cardEcdhShare), cardEcdhShare.length);
-
         ECPublicKey cardPublicKey = extractCardPublicKey(cardEcdhShare);
 
         dh.doPhase(cardPublicKey, true);
@@ -120,10 +114,20 @@ public class PV204APDU {
         MessageDigest md = MessageDigest.getInstance("SHA");
         ecdhSecret = md.digest(derivedSecret);
 
-
+        deriveSessionKey();
+        
+        //create chalenge
+        SecureRandom random = new SecureRandom();
+        byte[] challenge = new byte[31];
+        byte[] encChallenge = new byte[32];
+        random.nextBytes(challenge);
+        encChallenge = aes_encrypt.doFinal(challenge);
+        //System.out.printf("pc challenge: %s\n", cardTools.Util.toHex(challenge), challenge.length);
 
         
-        deriveSessionKey();
+        byte[] cardChallengeMix = sendECDHChallenge(pcEcdhShare, encChallenge);
+        
+        //System.out.printf("pc card: %s\n", cardTools.Util.toHex(cardEcdhShare), cardEcdhShare.length);
     }
     
     public byte[] sendECDHInitCommand() throws Exception {
@@ -134,14 +138,13 @@ public class PV204APDU {
     }
     
     public byte[] sendECDHChallenge(byte[] pcEcdhShare, byte[] encChallenge) throws Exception {
-        byte length = (byte) ( 64 + 16);
+        byte[] payload = Util.concat(pcEcdhShare, encChallenge);
+        byte[] encPayload = encDataByHashPIN(payload, hashedPIN);
+        byte[] command = {(byte) 0xb0, (byte) 0x63, (byte) 0x00, (byte) 0x00, (byte) encPayload.length};
 
-        byte[] command = {(byte) 0xb0, (byte) 0x63, (byte) 0x00, (byte) 0x00, length};
-        byte[] cmd_and_key = Util.concat(command, pcEcdhShare);
-        byte [] sendData = Util.concat(cmd_and_key, encChallenge);
-        byte[] encSendData = encDataByHashPIN(sendData, hashedPIN);
-
-        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(encSendData));
+        byte[] sendData = Util.concat(command, encPayload);
+        
+        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
         return response.getData();
     }
     
