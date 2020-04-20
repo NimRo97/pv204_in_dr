@@ -14,7 +14,10 @@ import java.security.spec.ECGenParameterSpec;
 import java.security.spec.ECParameterSpec;
 import java.security.spec.ECPoint;
 import java.security.spec.ECPublicKeySpec;
+import javax.crypto.Cipher;
 import javax.crypto.KeyAgreement;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 
 import javax.smartcardio.CommandAPDU;
 import javax.smartcardio.ResponseAPDU;
@@ -34,6 +37,9 @@ public class PV204APDU {
     byte[] ecdhSecret = null;
     byte[] pinSecret = null;
     
+    Cipher aes_encrypt = null;
+    Cipher aes_decrypt = null;
+    
     public static void main(String[] args) {
         try {
             PV204APDU main = new PV204APDU();
@@ -44,10 +50,19 @@ public class PV204APDU {
             System.out.println("\nControl of the correctness of the PIN and ECDH Secret:");
             main.compareSecretWithCard();
             main.comparePinWithCard();
+            
+            main.demoMarcoPolo();
                     
         } catch (Exception ex) {
             System.out.println("Exception: " + ex);
         }
+    }
+    
+    public void demoMarcoPolo() throws Exception {
+        byte[] marco = {0x6d, 0x61, 0x72, 0x63, 0x6f};
+        byte[] response = encryptAndSendAPDU(marco, (byte) 0x70);
+            
+        System.out.println(Util.bytesToHex(response));
     }
     
     public void installPinAndConnect() throws Exception {
@@ -100,8 +115,37 @@ public class PV204APDU {
     }
     
     //derive session key from shared ECDH secret
-    private void deriveSessionKey() {
-        //TODO
+    //TODO use padding
+    private void deriveSessionKey() throws Exception {
+        
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        byte[] derived = md.digest(ecdhSecret);
+        
+        SecretKeySpec aesKeySpec = new SecretKeySpec(derived, 0, 16, "AES");
+        IvParameterSpec ivSpec = new IvParameterSpec(derived, 16, 16);
+        
+        aes_encrypt = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        aes_encrypt.init(Cipher.ENCRYPT_MODE, aesKeySpec, ivSpec);
+        
+        aes_decrypt = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        aes_decrypt.init(Cipher.DECRYPT_MODE, aesKeySpec, ivSpec);
+    }
+    
+    private byte[] encryptAndSendAPDU(byte[] data, byte instruction) throws Exception {
+        byte[] padded = new byte[((data.length + 16 - 1) / 16 ) * 16];
+        System.arraycopy(data, 0, padded, 0, data.length);
+        byte[] encrypted = aes_encrypt.doFinal(padded);
+        
+        byte[] command = {(byte) 0xb0, instruction, (byte) 0x00, (byte) 0x00,
+                          (byte) encrypted.length};
+        byte[] sendData = Util.concat(command, encrypted);
+        
+        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
+        return decryptData(response.getData());
+    }
+    
+    private byte[] decryptData(byte[] encrypted) throws Exception {
+        return aes_decrypt.doFinal(encrypted);
     }
     
     //for debugging
