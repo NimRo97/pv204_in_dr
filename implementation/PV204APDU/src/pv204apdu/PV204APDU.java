@@ -126,10 +126,31 @@ public class PV204APDU {
 
         
         byte[] cardChallengeMix = sendECDHChallenge(pcEcdhShare, encChallenge);
+        byte[] authResponse = authCard(challenge, cardChallengeMix);
         
-        //System.out.printf("pc card: %s\n", cardTools.Util.toHex(cardEcdhShare), cardEcdhShare.length);
     }
-    
+    public byte[] authCard(byte[] challenge, byte[] cardChallengeMix) throws Exception {
+        byte[] decMix = aes_decrypt.doFinal(cardChallengeMix);
+        byte[] incChallenge = new byte[31];
+        System.arraycopy(decMix, (short) 0, incChallenge, (short) 0, (short) 31);
+        byte[] challengeAns = new byte[31];
+        System.arraycopy(decMix, (short) 31, challengeAns, (short) 0, (short) 31);
+        System.out.printf("ch answer: %s\n", cardTools.Util.toHex(challengeAns), challengeAns.length);
+        System.out.printf("ch: %s\n", cardTools.Util.toHex(challenge), challenge.length);
+        
+        if (! Arrays.equals(challengeAns, challenge) ) {
+            System.out.println("Auth of card failed on PC!");
+        }
+
+        byte[] encPayload = encDataByHashPIN(incChallenge, hashedPIN);
+        byte[] command = {(byte) 0xb0, (byte) 0x64, (byte) 0x00, (byte) 0x00, (byte) encPayload.length};
+        byte[] sendData = Util.concat(command, encPayload);
+
+
+        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
+        return response.getData();
+        
+    }
     public byte[] sendECDHInitCommand() throws Exception {
         byte[] command = {(byte) 0xb0, (byte) 0x62, (byte) 0x00, (byte) 0x00};
         

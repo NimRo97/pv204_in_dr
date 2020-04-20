@@ -18,6 +18,8 @@ public class PV204Applet extends javacard.framework.Applet {
     final static byte INS_MARCO = (byte) 0x70;
     final static byte INS_ECDHINIT = (byte) 0x62;
     final static byte INS_SOLVE_CHALLENGE = (byte) 0x63;
+    final static byte INS_AUTH_PC = (byte) 0x64;
+
 
     final static short ARRAY_LENGTH = (short) 0xff;
     final static byte AES_BLOCK_LENGTH = (short) 0x16;
@@ -58,6 +60,7 @@ public class PV204Applet extends javacard.framework.Applet {
     private byte[] m_pin_data = new byte[PIN_LENGTH];
     private OwnerPIN m_pin = null;
     private byte[] hashedPIN = new byte[16];
+    private byte[] challenge = new byte[31];
 
     private byte m_ecdh_secret[] = null;
     private AESKey m_aes_key = null;
@@ -188,7 +191,9 @@ public class PV204Applet extends javacard.framework.Applet {
                         break;
                     case INS_SOLVE_CHALLENGE:
                         ECDHSolveChallenge(apdu, dh);
-                        
+                        break;
+                    case INS_AUTH_PC:
+                        ECDHAuthPC(apdu, challenge);
                         break;
                         
                         
@@ -348,14 +353,46 @@ public class PV204Applet extends javacard.framework.Applet {
 
         m_aes_decrypt.doFinal(encPcChallenge, (short) 0, (short) 32, pcChallenge, (short) 0);
         //System.out.printf("aplet:: pc challenge: %s\n", cardTools.Util.toHex(pcChallenge), pcChallenge.length);
-        Util.arrayCopy(pcChallenge, (short) 0, apdubuf, ISO7816.OFFSET_CDATA, (short) 32);
-
-        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (32));
         
-
-
+        RandomData random = RandomData.getInstance(RandomData.ALG_TRNG);
+        random.nextBytes(challenge, (short) 0, (short) 31);
+        byte[] sendData = new byte[64];
+        Util.arrayCopy(challenge, (short) 0, sendData, (short) 0, (short) 31);
+        Util.arrayCopy(pcChallenge, (short) 0, sendData, (short) 31, (short) 31);
+        sendData[63] = (byte) 02; // pkcs5 padding
+        sendData[62] = (byte) 02; // pkcs5 padding
+        m_aes_encrypt.doFinal(sendData, (short) 0, (short) 64, sendData, (short) 0);
+        
+        Util.arrayCopy(sendData, (short) 0, apdubuf, ISO7816.OFFSET_CDATA, (short) 64);
+        
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (64));
     }
     
+    void ECDHAuthPC(APDU apdu, byte[] challenge) {
+        byte[] apdubuf = apdu.getBuffer();
+        short dataLen = apdu.setIncomingAndReceive();
+        
+        byte[] recData = new byte[dataLen];
+        Util.arrayCopy(apdubuf, ISO7816.OFFSET_CDATA, recData, (short) 0, dataLen);
+        
+        byte[] solvedChallenge = new byte[32];
+        m_aes_decrypt.doFinal(recData, (short) 0, (short) 32, solvedChallenge, (short) 0);
+        //System.out.printf("aplet ch: %s\n", cardTools.Util.toHex(solvedChallenge), challenge.length);
+        //System.out.printf("aplet ch: %s\n", cardTools.Util.toHex(pcChallenge), challenge.length);
+
+
+        
+        if (Util.arrayCompare(challenge, (short) 0, solvedChallenge, (short) 0, (short) 31) == 0)
+            apdubuf[ISO7816.OFFSET_CDATA + 1] = (byte) 01;
+        else {
+            apdubuf[ISO7816.OFFSET_CDATA + 1] = (byte) 01;
+            System.out.println("Auth of PC failed on card!");
+            // TODO: auth failed
+        }
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (64));
+            
+        
+    }
     //Derive session key from shared secret
     void deriveSessionKey() {
         byte[] iv = new byte[16]; //TODO derive instead
