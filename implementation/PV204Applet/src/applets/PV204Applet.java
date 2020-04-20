@@ -16,7 +16,7 @@ public class PV204Applet extends javacard.framework.Applet {
     
     final static byte INS_MARCO = (byte) 0x70;
 
-    final static short ARRAY_LENGTH = (short) 0x1ff;
+    final static short ARRAY_LENGTH = (short) 0xff;
     final static byte AES_BLOCK_LENGTH = (short) 0x16;
 
     final static short SW_BAD_TEST_DATA_LEN = (short) 0x6680;
@@ -47,6 +47,8 @@ public class PV204Applet extends javacard.framework.Applet {
     private AESKey m_aes_key = null;
     private Cipher m_aes_encrypt = null;
     private Cipher m_aes_decrypt = null;
+    
+    private MessageDigest m_hash = null;
 
     // TEMPORARRY ARRAY IN RAM
     private byte m_ramArray[] = null;
@@ -99,9 +101,11 @@ public class PV204Applet extends javacard.framework.Applet {
         m_aes_encrypt = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
         m_aes_decrypt = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
         
-        //does not work???
+        //jcardsim does not support the padding
         //m_aes_encrypt = Cipher.getInstance(Cipher.ALG_AES_CBC_PKCS5, false);
         //m_aes_decrypt = Cipher.getInstance(Cipher.ALG_AES_CBC_PKCS5, false);
+        
+        m_hash = MessageDigest.getInstance(MessageDigest.ALG_SHA_256, false);
         
         // register this instance
         register();
@@ -284,13 +288,12 @@ public class PV204Applet extends javacard.framework.Applet {
         byte[] iv = new byte[16]; //TODO derive instead
         Util.arrayFillNonAtomic(iv, (short) 0, (short) 16, (byte) 0);
         
-        //throws exception for some reason
-        //Util.arrayFill(iv, (short) 0, (short) 16, (byte) 0);
+        m_hash.doFinal(m_ecdh_secret, (short) 0, (short) m_ecdh_secret.length, m_ramArray, (short) 0);
         
-        m_aes_key.setKey(m_ecdh_secret, (short) 0); //TODO derive instead
+        m_aes_key.setKey(m_ramArray, (short) 0); //TODO derive instead
         
-        m_aes_encrypt.init(m_aes_key, Cipher.MODE_ENCRYPT, iv, (short) 0, (short) 16);
-        m_aes_decrypt.init(m_aes_key, Cipher.MODE_DECRYPT, iv, (short) 0, (short) 16);
+        m_aes_encrypt.init(m_aes_key, Cipher.MODE_ENCRYPT, m_ramArray, (short) 16, (short) 16);
+        m_aes_decrypt.init(m_aes_key, Cipher.MODE_DECRYPT, m_ramArray, (short) 16, (short) 16);
     }
     
     //only for debugging
