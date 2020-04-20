@@ -377,19 +377,14 @@ public class PV204Applet extends javacard.framework.Applet {
         
         byte[] solvedChallenge = new byte[32];
         m_aes_decrypt.doFinal(recData, (short) 0, (short) 32, solvedChallenge, (short) 0);
-        //System.out.printf("aplet ch: %s\n", cardTools.Util.toHex(solvedChallenge), challenge.length);
-        //System.out.printf("aplet ch: %s\n", cardTools.Util.toHex(pcChallenge), challenge.length);
-
-
-        
         if (Util.arrayCompare(challenge, (short) 0, solvedChallenge, (short) 0, (short) 31) == 0)
-            apdubuf[ISO7816.OFFSET_CDATA + 1] = (byte) 01;
+            apdubuf[ISO7816.OFFSET_CDATA] = (byte) 01;
         else {
-            apdubuf[ISO7816.OFFSET_CDATA + 1] = (byte) 01;
+            apdubuf[ISO7816.OFFSET_CDATA] = (byte) 01;
             System.out.println("Auth of PC failed on card!");
             // TODO: auth failed
         }
-        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (64));
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (1));
             
         
     }
