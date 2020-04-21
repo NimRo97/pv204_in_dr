@@ -36,19 +36,18 @@ public class PV204APDU {
     
     final CardManager cardMngr = new CardManager(true, APPLET_AID_BYTE);
     byte[] ecdhSecret = null;
-    byte[] pinSecret = null;
+    static byte[] pinSecret = null;
     
     Cipher aes_encrypt = null;
     Cipher aes_decrypt = null;
     
-    byte [] hashedPIN = new byte[16];
         
     public static void main(String[] args) {
         try {
             PV204APDU main = new PV204APDU();
             
             main.installPinAndConnect();
-            main.startEcdhSession();
+            main.startEcdhSession(pinSecret);
             
             System.out.println("\nControl of the correctness of the PIN and ECDH Secret:");
             main.compareSecretWithCard();
@@ -87,11 +86,14 @@ public class PV204APDU {
         System.out.println(" Done.");
         
         pinSecret = pin;
-        hashedPIN = hashPIN(pin);
 
     }
     
-    private void startEcdhSession() throws Exception {
+    private void startEcdhSession(byte[] pin) throws Exception {
+
+        byte [] hashedPIN = new byte[16];
+        hashedPIN = hashPIN(pin);
+
 
         KeyAgreement dh = KeyAgreement.getInstance("ECDH");
         
@@ -118,11 +120,11 @@ public class PV204APDU {
         //create chalenge
         SecureRandom random = new SecureRandom();
         byte[] challenge = new byte[31];
-        byte[] encChallenge = new byte[32];
+        byte[] encChallenge;
         random.nextBytes(challenge);
         encChallenge = aes_encrypt.doFinal(challenge);
         
-        byte[] cardChallengeMix = sendECDHChallenge(pcEcdhShare, encChallenge);
+        byte[] cardChallengeMix = sendECDHChallenge(pcEcdhShare, encChallenge, hashedPIN);
         byte[] authResponse = authCard(challenge, cardChallengeMix);
         
         if (authResponse[0] == (byte) 01)
@@ -161,7 +163,7 @@ public class PV204APDU {
         return response.getData();
     }
     
-    private byte[] sendECDHChallenge(byte[] pcEcdhShare, byte[] encChallenge) throws Exception {
+    private byte[] sendECDHChallenge(byte[] pcEcdhShare, byte[] encChallenge, byte[] hashedPIN) throws Exception {
         byte[] payload = Util.concat(pcEcdhShare, encChallenge);
         byte[] encPayload = encDataByHashPIN(payload, hashedPIN);
         byte[] command = {(byte) 0xb0, (byte) 0x63, (byte) 0x00, (byte) 0x00, (byte) encPayload.length};

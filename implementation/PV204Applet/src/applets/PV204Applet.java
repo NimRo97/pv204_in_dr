@@ -1,6 +1,6 @@
 package applets;
 
-import java.util.Arrays;
+//import java.util.Arrays;
 import javacard.framework.*;
 import javacard.security.*;
 import javacardx.crypto.*;
@@ -364,8 +364,10 @@ public class PV204Applet extends javacard.framework.Applet {
         
         MessageDigest md = MessageDigest.getInstance(MessageDigest.ALG_SHA, false);
         byte[] hashed = new byte[20];
+        byte[] PINsecret = new byte[16];
         md.doFinal(pin, (short) 0, (short) 4, hashed, (short) 0);
-        return Arrays.copyOf(hashed, 16);
+        Util.arrayCopy(hashed, (short) 0, PINsecret, (short) 0, (short) 16);
+        return PINsecret;
 
     }
     
