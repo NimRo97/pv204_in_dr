@@ -20,14 +20,9 @@ public class PV204Applet extends javacard.framework.Applet {
     final static byte INS_SOLVE_CHALLENGE = (byte) 0x63;
     final static byte INS_AUTH_PC = (byte) 0x64;
 
-
-    final static short ARRAY_LENGTH = (short) 0xff;
     final static byte AES_BLOCK_LENGTH = (short) 0x16;
+    final static short ARRAY_LENGTH = (short) AES_BLOCK_LENGTH * 2;
 
-    final static short SW_BAD_TEST_DATA_LEN = (short) 0x6680;
-    final static short SW_KEY_LENGTH_BAD = (short) 0x6715;
-    final static short SW_CIPHER_DATA_LENGTH_BAD = (short) 0x6710;
-    final static short SW_OBJECT_NOT_AVAILABLE = (short) 0x6711;
     final static short SW_BAD_PIN = (short) 0x6900;
 
     
