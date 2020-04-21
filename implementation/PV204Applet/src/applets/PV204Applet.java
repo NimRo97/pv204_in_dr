@@ -22,12 +22,10 @@ public class PV204Applet extends javacard.framework.Applet {
 
     final static byte AES_BLOCK_LENGTH = (short) 0x16;
     final static short ARRAY_LENGTH = (short) AES_BLOCK_LENGTH * 2;
+    final static short PIN_LENGTH = (short) 4;
 
     final static short SW_BAD_PIN = (short) 0x6900;
-
     
-    
-    final static short PIN_LENGTH = (short) 4;
     /**
      * Method installing the applet.
      *
@@ -57,44 +55,27 @@ public class PV204Applet extends javacard.framework.Applet {
 
     // TEMPORARRY ARRAY IN RAM
     private byte m_ramArray[] = null;
-    // PERSISTENT ARRAY IN EEPROM
-    private byte m_dataArray[] = null;
 
     /**
      * PV204Applet default constructor Only this class's install method should
      * create the applet object.
      */
     protected PV204Applet(byte[] buffer, short offset, byte length) throws ISOException {
-        // data offset is used for application specific parameter.
-        // initialization with default offset (AID offset).
         
         short dataOffset = offset;
-        // Install parameter detail. Compliant with OP 2.0.1.
-
-        // | size | content
-        // |------|---------------------------
-        // |  1   | [AID_Length]
-        // | 5-16 | [AID_Bytes]
-        // |  1   | [Privilege_Length]
-        // | 1-n  | [Privilege_Bytes] (normally 1Byte)
-        // |  1   | [Application_Proprietary_Length]
-        // | 0-m  | [Application_Proprietary_Bytes]
+        
         // shift to privilege offset
         dataOffset += (short) (1 + buffer[offset]);
         // finally shift to Application specific offset
         dataOffset += (short) (1 + buffer[dataOffset]);
 
-        m_dataArray = new byte[ARRAY_LENGTH];
-        Util.arrayFillNonAtomic(m_dataArray, (short) 0, ARRAY_LENGTH, (byte) 0);
-
         // CREATE RANDOM DATA GENERATORS
         m_secureRandom = RandomData.getInstance(RandomData.ALG_SECURE_RANDOM);
-        //m_secureRandom.generateData(m_dataArray, (short) 0, (short) 32);
         
         System.out.println(" Initializing...");
 
         // TEMPORARY BUFFER USED FOR FAST OPERATION WITH MEMORY LOCATED IN RAM
-        m_ramArray = JCSystem.makeTransientByteArray((short) 260, JCSystem.CLEAR_ON_DESELECT);
+        m_ramArray = JCSystem.makeTransientByteArray(ARRAY_LENGTH, JCSystem.CLEAR_ON_DESELECT);
         
         //copy PIN
         Util.arrayCopy(buffer, (byte) (dataOffset + 1), m_pin_data, (short)0 , PIN_LENGTH);
@@ -105,7 +86,7 @@ public class PV204Applet extends javacard.framework.Applet {
         m_pin.update(buffer, (byte) (dataOffset + 1), (byte) PIN_LENGTH); // set initial random pin*/
 
         m_aes_key = (AESKey) KeyBuilder.buildKey(KeyBuilder.TYPE_AES, KeyBuilder.LENGTH_AES_128, false);
-        m_aes_key.setKey(m_dataArray, (short) 0);
+        m_aes_key.setKey(m_ramArray, (short) 0);
         m_aes_encrypt = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
         m_aes_decrypt = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
         
