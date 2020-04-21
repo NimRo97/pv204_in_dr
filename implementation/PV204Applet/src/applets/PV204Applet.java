@@ -229,13 +229,12 @@ public class PV204Applet extends javacard.framework.Applet {
     public void encryptAndSendAPDU(APDU apdu, short dataLen) throws ISOException {
         byte[] apdubuf = apdu.getBuffer();
          
-        //PKCS#5 padding requires additional block if length % 16 == 0
+        // PKCS#5 padding requires additional block if length % 16 == 0
         short nearest = (short) (dataLen + 16 - (dataLen % 16));
         Util.arrayFillNonAtomic(apdubuf, (short) (ISO7816.OFFSET_CDATA + dataLen),
         (short) (nearest - dataLen), (byte) (16 - dataLen % 16));
         
         m_aes_encrypt.doFinal(apdubuf, ISO7816.OFFSET_CDATA, nearest, apdubuf, ISO7816.OFFSET_CDATA);
-        
         
         apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, nearest);
     }
