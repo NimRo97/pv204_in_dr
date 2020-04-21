@@ -62,14 +62,14 @@ public class PV204APDU {
         }
     }
     
-    public void demoMarcoPolo() throws Exception {
+    private void demoMarcoPolo() throws Exception {
         byte[] marco = {0x6d, 0x61, 0x72, 0x63, 0x6f};
         byte[] response = encryptAndSendAPDU(marco, (byte) 0x70);
             
         System.out.println(Util.bytesToHex(response));
     }
     
-    public void installPinAndConnect() throws Exception {
+    private void installPinAndConnect() throws Exception {
         final RunConfig runCfg = RunConfig.getDefaultConfig();
         runCfg.setAppletToSimulate(PV204Applet.class);
         runCfg.setTestCardType(RunConfig.CARD_TYPE.JCARDSIMLOCAL);
@@ -91,7 +91,7 @@ public class PV204APDU {
 
     }
     
-    public void startEcdhSession() throws Exception {
+    private void startEcdhSession() throws Exception {
 
         KeyAgreement dh = KeyAgreement.getInstance("ECDH");
         
@@ -133,7 +133,7 @@ public class PV204APDU {
 
         
     }
-    public byte[] authCard(byte[] challenge, byte[] cardChallengeMix) throws Exception {
+    private byte[] authCard(byte[] challenge, byte[] cardChallengeMix) throws Exception {
         byte[] decMix = aes_decrypt.doFinal(cardChallengeMix);
         byte[] incChallenge = new byte[31];
         System.arraycopy(decMix, (short) 0, incChallenge, (short) 0, (short) 31);
@@ -154,14 +154,14 @@ public class PV204APDU {
         return response.getData();
         
     }
-    public byte[] sendECDHInitCommand() throws Exception {
+    private byte[] sendECDHInitCommand() throws Exception {
         byte[] command = {(byte) 0xb0, (byte) 0x62, (byte) 0x00, (byte) 0x00};
         
         final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(command));
         return response.getData();
     }
     
-    public byte[] sendECDHChallenge(byte[] pcEcdhShare, byte[] encChallenge) throws Exception {
+    private byte[] sendECDHChallenge(byte[] pcEcdhShare, byte[] encChallenge) throws Exception {
         byte[] payload = Util.concat(pcEcdhShare, encChallenge);
         byte[] encPayload = encDataByHashPIN(payload, hashedPIN);
         byte[] command = {(byte) 0xb0, (byte) 0x63, (byte) 0x00, (byte) 0x00, (byte) encPayload.length};
@@ -232,7 +232,7 @@ public class PV204APDU {
         System.out.println("Card PIN: " + Util.bytesToHex(cardPin));
     }
     
-    public byte[] prepareKeyPair(KeyAgreement dh) throws Exception {
+    private byte[] prepareKeyPair(KeyAgreement dh) throws Exception {
         KeyPair keyPair = getRandomEcKeyPair();
         
         dh.init(keyPair.getPrivate());
@@ -240,7 +240,7 @@ public class PV204APDU {
         return encodeEcPublicKey((ECPublicKey) keyPair.getPublic());
     }
     
-    public byte[] encodeEcPublicKey(ECPublicKey key) {
+    private byte[] encodeEcPublicKey(ECPublicKey key) {
         ECPoint w = key.getW();
         byte[] affineX = w.getAffineX().toByteArray();
         byte[] affineY = w.getAffineY().toByteArray();
@@ -254,7 +254,7 @@ public class PV204APDU {
         return x962encoded;
     }
     
-    ECPublicKey extractCardPublicKey(byte[] cardEcdhShare) throws Exception {
+    private ECPublicKey extractCardPublicKey(byte[] cardEcdhShare) throws Exception {
         byte[] cardX = new byte[28];
         byte[] cardY = new byte[28];
 
@@ -272,7 +272,7 @@ public class PV204APDU {
         return (ECPublicKey) KeyFactory.getInstance("EC").generatePublic(ecPkeySpec);
     }
     
-    public KeyPair getRandomEcKeyPair() throws Exception {
+    private KeyPair getRandomEcKeyPair() throws Exception {
         KeyPairGenerator keyGen = KeyPairGenerator.getInstance("EC");
         keyGen.initialize(new ECGenParameterSpec ("secp224r1"));
         return keyGen.generateKeyPair();
@@ -285,7 +285,7 @@ public class PV204APDU {
         return Arrays.copyOf(key, 16);
     }
     
-    public byte[] encDataByHashPIN(byte[] data, byte[] key) throws Exception {
+    private byte[] encDataByHashPIN(byte[] data, byte[] key) throws Exception {
 
         SecretKeySpec aesKey = new SecretKeySpec(key, "AES");
         Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
@@ -293,7 +293,7 @@ public class PV204APDU {
         
         return cipher.doFinal(data);
     }
-    public byte[] decDataByHashPIN(byte[] data, byte[] PINkey) throws Exception {
+    private byte[] decDataByHashPIN(byte[] data, byte[] PINkey) throws Exception {
 
         SecretKeySpec AESKey = new SecretKeySpec(PINkey, "AES");
         Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
