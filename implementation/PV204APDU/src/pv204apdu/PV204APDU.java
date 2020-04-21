@@ -5,10 +5,12 @@ import cardTools.CardManager;
 import cardTools.RunConfig;
 import cardTools.Util;
 import java.math.BigInteger;
+import java.security.InvalidKeyException;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
 import java.security.spec.ECParameterSpec;
@@ -17,8 +19,9 @@ import java.security.spec.ECPublicKeySpec;
 import javax.crypto.Cipher;
 import javax.crypto.KeyAgreement;
 import javax.crypto.spec.IvParameterSpec;
+import java.util.Arrays;
+import javacard.framework.ISO7816;
 import javax.crypto.spec.SecretKeySpec;
-
 import javax.smartcardio.CommandAPDU;
 import javax.smartcardio.ResponseAPDU;
 
@@ -40,6 +43,8 @@ public class PV204APDU {
     Cipher aes_encrypt = null;
     Cipher aes_decrypt = null;
     
+    byte [] hashedPIN = new byte[16];
+        
     public static void main(String[] args) {
         try {
             PV204APDU main = new PV204APDU();
@@ -83,32 +88,86 @@ public class PV204APDU {
         System.out.println(" Done.");
         
         pinSecret = pin;
+        hashedPIN = hashPIN(pin);
+
     }
     
     public void startEcdhSession() throws Exception {
 
         KeyAgreement dh = KeyAgreement.getInstance("ECDH");
         
-        //These are the bytes to send to card
+        //prepare arrays for shared keys
         byte[] pcEcdhShare = prepareKeyPair(dh);
+        byte[] encPcEcdhShare = new byte[64];
+        byte[] cardEcdhShare = new byte[57];
+        byte[] encCardEcdhShare = new byte[64];
         
-        //send PC ECDH share and receive card ECDH share
-        byte[] cardEcdhShare = exchangeEcdhShares(pcEcdhShare);
         
+        //prompt card to start key exchange via PAKE protocol
+        encCardEcdhShare = sendECDHInitCommand();
+        cardEcdhShare = decDataByHashPIN(encCardEcdhShare, hashedPIN);
+
         ECPublicKey cardPublicKey = extractCardPublicKey(cardEcdhShare);
+
         dh.doPhase(cardPublicKey, true);
         byte[] derivedSecret = dh.generateSecret();
-        
         MessageDigest md = MessageDigest.getInstance("SHA");
         ecdhSecret = md.digest(derivedSecret);
-        
+
         deriveSessionKey();
+        
+        //create chalenge
+        SecureRandom random = new SecureRandom();
+        byte[] challenge = new byte[31];
+        byte[] encChallenge = new byte[32];
+        random.nextBytes(challenge);
+        encChallenge = aes_encrypt.doFinal(challenge);
+        
+        byte[] cardChallengeMix = sendECDHChallenge(pcEcdhShare, encChallenge);
+        byte[] authResponse = authCard(challenge, cardChallengeMix);
+        
+        if (authResponse[0] == (byte) 01)
+            System.out.println("Authentication was successful!");
+        else
+            System.out.println("Authentication FAILED!");
+                    // TODO: auth failure
+
+        
+    }
+    public byte[] authCard(byte[] challenge, byte[] cardChallengeMix) throws Exception {
+        byte[] decMix = aes_decrypt.doFinal(cardChallengeMix);
+        byte[] incChallenge = new byte[31];
+        System.arraycopy(decMix, (short) 0, incChallenge, (short) 0, (short) 31);
+        byte[] challengeAns = new byte[31];
+        System.arraycopy(decMix, (short) 31, challengeAns, (short) 0, (short) 31);
+        
+        if (! Arrays.equals(challengeAns, challenge) ) {
+            System.out.println("Auth of card failed on PC!");
+            // TODO: auth failure
+        }
+
+        byte[] encPayload = aes_encrypt.doFinal(incChallenge);
+        byte[] command = {(byte) 0xb0, (byte) 0x64, (byte) 0x00, (byte) 0x00, (byte) encPayload.length};
+        byte[] sendData = Util.concat(command, encPayload);
+
+
+        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
+        return response.getData();
+        
+    }
+    public byte[] sendECDHInitCommand() throws Exception {
+        byte[] command = {(byte) 0xb0, (byte) 0x62, (byte) 0x00, (byte) 0x00};
+        
+        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(command));
+        return response.getData();
     }
     
-    public byte[] exchangeEcdhShares(byte[] pcEcdhShare) throws Exception {
-        byte[] command = {(byte) 0xb0, (byte) 0x59, (byte) 0x00, (byte) 0x00,
-                          (byte) pcEcdhShare.length};
-        byte[] sendData = Util.concat(command, pcEcdhShare);
+    public byte[] sendECDHChallenge(byte[] pcEcdhShare, byte[] encChallenge) throws Exception {
+        byte[] payload = Util.concat(pcEcdhShare, encChallenge);
+        byte[] encPayload = encDataByHashPIN(payload, hashedPIN);
+        byte[] command = {(byte) 0xb0, (byte) 0x63, (byte) 0x00, (byte) 0x00, (byte) encPayload.length};
+
+        byte[] sendData = Util.concat(command, encPayload);
         
         final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
         return response.getData();
@@ -194,7 +253,7 @@ public class PV204APDU {
     ECPublicKey extractCardPublicKey(byte[] cardEcdhShare) throws Exception {
         byte[] cardX = new byte[28];
         byte[] cardY = new byte[28];
-        
+
         System.arraycopy(cardEcdhShare, 1, cardX, 0, 28);
         System.arraycopy(cardEcdhShare, 29, cardY, 0, 28);
         
@@ -215,4 +274,28 @@ public class PV204APDU {
         return keyGen.generateKeyPair();
     }
     
+    private byte[] hashPIN(byte[] pin) throws Exception {
+        
+        MessageDigest md = MessageDigest.getInstance("SHA-1");
+        byte[] key = md.digest(pin);
+        return Arrays.copyOf(key, 16);
+    }
+    
+    public byte[] encDataByHashPIN(byte[] data, byte[] key) throws Exception {
+
+        SecretKeySpec aesKey = new SecretKeySpec(key, "AES");
+        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, aesKey, new IvParameterSpec(new byte[16]));
+        
+        return cipher.doFinal(data);
+    }
+    public byte[] decDataByHashPIN(byte[] data, byte[] PINkey) throws Exception {
+
+        SecretKeySpec AESKey = new SecretKeySpec(PINkey, "AES");
+        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+
+        cipher.init(Cipher.DECRYPT_MODE, AESKey, new IvParameterSpec(new byte[16]));
+        return cipher.doFinal(data);
+
+    }
 }
