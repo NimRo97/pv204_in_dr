@@ -255,10 +255,10 @@ public class PV204Applet extends javacard.framework.Applet {
     }
 
     void clearSessionData() {
-        // E.g., fill sesssion data in RAM with zeroes
+        // Zero out the RAM array
         Util.arrayFillNonAtomic(m_ramArray, (short) 0, (short) m_ramArray.length, (byte) 0);
-        // Or better fill with random data
-        m_secureRandom.generateData(m_ramArray, (short) 0, (short) m_ramArray.length);
+        // Zero out session counter
+        m_sessionCounter[0] = (byte) 0;
     }
     
     void ECDHInit_old(APDU apdu) {
