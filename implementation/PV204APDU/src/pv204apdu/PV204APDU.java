@@ -132,9 +132,9 @@ public class PV204APDU {
     }
     
     private byte[] encryptAndSendAPDU(byte[] data, byte instruction) throws Exception {
-        byte[] padded = new byte[((data.length + 16 - 1) / 16 ) * 16];
-        System.arraycopy(data, 0, padded, 0, data.length);
-        byte[] encrypted = aes_encrypt.doFinal(padded);
+        //byte[] padded = new byte[((data.length + 16 - 1) / 16 ) * 16];
+        //System.arraycopy(data, 0, padded, 0, data.length);
+        byte[] encrypted = aes_encrypt.doFinal(data);
         
         byte[] command = {(byte) 0xb0, instruction, (byte) 0x00, (byte) 0x00,
                           (byte) encrypted.length};
