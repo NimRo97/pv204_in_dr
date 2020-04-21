@@ -55,6 +55,8 @@ public class PV204APDU {
             main.comparePinWithCard();
             
             main.demoMarcoPolo();
+            
+            main.demoMarcoPolo();
                     
         } catch (Exception ex) {
             System.out.println("Exception: " + ex);
