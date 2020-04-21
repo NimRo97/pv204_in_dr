@@ -55,8 +55,6 @@ public class PV204APDU {
             main.comparePinWithCard();
             
             main.demoMarcoPolo();
-            
-            main.demoMarcoPolo();
                     
         } catch (Exception ex) {
             System.out.println("Exception: " + ex);
@@ -174,7 +172,6 @@ public class PV204APDU {
     }
     
     //derive session key from shared ECDH secret
-    //TODO use padding
     private void deriveSessionKey() throws Exception {
         
         MessageDigest md = MessageDigest.getInstance("SHA-256");
@@ -199,6 +196,12 @@ public class PV204APDU {
         byte[] sendData = Util.concat(command, encrypted);
         
         final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
+        
+        if (response.getSW() == 0x6901) {
+            System.out.println("New session required.");
+            //TODO handle
+        }
+        
         return decryptData(response.getData());
     }
     

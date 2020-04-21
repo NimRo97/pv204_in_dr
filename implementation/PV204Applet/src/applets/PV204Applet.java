@@ -7,10 +7,10 @@ import javacardx.crypto.*;
 
 public class PV204Applet extends javacard.framework.Applet {
 
-    // MAIN INSTRUCTION CLASS
+    // Main instruction class
     final static byte CLA_PV204APPLET = (byte) 0xB0;
 
-    // INSTRUCTIONS
+    // Instructions
     final static byte INS_ECDHINIT_OLD = (byte) 0x59; // deprected
     final static byte INS_GETSECRET = (byte) 0x60;
     final static byte INS_GETPIN = (byte) 0x61;
@@ -20,11 +20,14 @@ public class PV204Applet extends javacard.framework.Applet {
     final static byte INS_SOLVE_CHALLENGE = (byte) 0x63;
     final static byte INS_AUTH_PC = (byte) 0x64;
 
+    // Constants
     final static byte AES_BLOCK_LENGTH = (short) 0x16;
     final static short ARRAY_LENGTH = (short) AES_BLOCK_LENGTH * 2;
     final static short PIN_LENGTH = (short) 4;
 
+    // Error codes
     final static short SW_BAD_PIN = (short) 0x6900;
+    final static short SW_NEW_SESSION_REQUIRED = (short) 0x6901;
     
     /**
      * Method installing the applet.
@@ -39,6 +42,7 @@ public class PV204Applet extends javacard.framework.Applet {
         new PV204Applet(bArray, bOffset, bLength);
     }
 
+    // Attributes
     private RandomData m_secureRandom = null;
     private byte[] m_pin_data = new byte[PIN_LENGTH];
     private OwnerPIN m_pin = null;
@@ -53,8 +57,11 @@ public class PV204Applet extends javacard.framework.Applet {
     private MessageDigest m_hash = null;
     private KeyAgreement dh = null;
 
-    // TEMPORARRY ARRAY IN RAM
+    // Transient array for session key
     private byte m_ramArray[] = null;
+    
+    // Transient session message counter
+    private byte m_sessionCounter[] = null;
 
     /**
      * PV204Applet default constructor Only this class's install method should
@@ -69,34 +76,28 @@ public class PV204Applet extends javacard.framework.Applet {
         // finally shift to Application specific offset
         dataOffset += (short) (1 + buffer[dataOffset]);
 
-        // CREATE RANDOM DATA GENERATORS
+        // RNG
         m_secureRandom = RandomData.getInstance(RandomData.ALG_SECURE_RANDOM);
-        
-        System.out.println(" Initializing...");
 
-        // TEMPORARY BUFFER USED FOR FAST OPERATION WITH MEMORY LOCATED IN RAM
-        m_ramArray = JCSystem.makeTransientByteArray(ARRAY_LENGTH, JCSystem.CLEAR_ON_DESELECT);
+        // Transient session information to clear in case of power reset
+        m_ramArray = JCSystem.makeTransientByteArray(ARRAY_LENGTH, JCSystem.CLEAR_ON_RESET);
+        m_sessionCounter = JCSystem.makeTransientByteArray((short) 1, JCSystem.CLEAR_ON_RESET);
         
         //copy PIN
         Util.arrayCopy(buffer, (byte) (dataOffset + 1), m_pin_data, (short)0 , PIN_LENGTH);
-        m_pin = new OwnerPIN((byte) 3, (byte) PIN_LENGTH); // 5 tries, 4 digits in pin
+        m_pin = new OwnerPIN((byte) 3, (byte) PIN_LENGTH); // 3 tries, 4 digits in pin
         if (buffer[dataOffset] != (byte) PIN_LENGTH) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
-        m_pin.update(buffer, (byte) (dataOffset + 1), (byte) PIN_LENGTH); // set initial random pin*/
+        m_pin.update(buffer, (byte) (dataOffset + 1), (byte) PIN_LENGTH);
 
         m_aes_key = (AESKey) KeyBuilder.buildKey(KeyBuilder.TYPE_AES, KeyBuilder.LENGTH_AES_128, false);
         m_aes_key.setKey(m_ramArray, (short) 0);
         m_aes_encrypt = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
         m_aes_decrypt = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
         
-        //jcardsim does not support the padding
-        //m_aes_encrypt = Cipher.getInstance(Cipher.ALG_AES_CBC_PKCS5, false);
-        //m_aes_decrypt = Cipher.getInstance(Cipher.ALG_AES_CBC_PKCS5, false);
-        
         m_hash = MessageDigest.getInstance(MessageDigest.ALG_SHA_256, false);
         hashedPIN = hashPIN(m_pin_data);
-        
                 
         // register this instance
         register();
@@ -171,12 +172,20 @@ public class PV204Applet extends javacard.framework.Applet {
                 ISOException.throwIt(ISO7816.SW_CLA_NOT_SUPPORTED);
             }
             
+        } catch(ISOException e) {
+            ISOException.throwIt(e.getReason());
         } catch (Exception e) {
             ISOException.throwIt(ISO7816.SW_UNKNOWN);
         }
     }
     
     public void processSecuredAPDU(APDU apdu) throws ISOException {
+        
+        if (m_sessionCounter == null ||
+            m_sessionCounter[0] <= 0 || m_sessionCounter[0] > 20) {
+            ISOException.throwIt(SW_NEW_SESSION_REQUIRED);
+        }
+        m_sessionCounter[0]--;
         
         decryptAPDU(apdu);
         byte[] apduBuffer = apdu.getBuffer();
@@ -356,15 +365,15 @@ public class PV204Applet extends javacard.framework.Applet {
     }
     //Derive session key from shared secret
     void deriveSessionKey() {
-        byte[] iv = new byte[16]; //TODO derive instead
-        Util.arrayFillNonAtomic(iv, (short) 0, (short) 16, (byte) 0);
         
         m_hash.doFinal(m_ecdh_secret, (short) 0, (short) m_ecdh_secret.length, m_ramArray, (short) 0);
         
-        m_aes_key.setKey(m_ramArray, (short) 0); //TODO derive instead
+        m_aes_key.setKey(m_ramArray, (short) 0); //TODO local scope
         
         m_aes_encrypt.init(m_aes_key, Cipher.MODE_ENCRYPT, m_ramArray, (short) 16, (short) 16);
         m_aes_decrypt.init(m_aes_key, Cipher.MODE_DECRYPT, m_ramArray, (short) 16, (short) 16);
+        
+        m_sessionCounter[0] = (byte) 20;
     }
     
     //only for debugging
