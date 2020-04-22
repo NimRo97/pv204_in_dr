@@ -4,6 +4,7 @@ import applets.PV204Applet;
 import cardTools.CardManager;
 import cardTools.RunConfig;
 import cardTools.Util;
+import java.io.IOException;
 import java.math.BigInteger;
 import java.security.KeyFactory;
 import java.security.KeyPair;
@@ -33,10 +34,10 @@ public class PV204APDU {
     private static final byte APPLET_AID_BYTE[] = Util.hexStringToByteArray(APPLET_AID);
     
     private static final String PIN_LENGTH = "04";
+    private static final int PIN_DIGITS = 4;
     
     final CardManager cardMngr = new CardManager(true, APPLET_AID_BYTE);
     byte[] ecdhSecret = null;
-    static byte[] pinSecret = null;
     
     Cipher aes_encrypt = null;
     Cipher aes_decrypt = null;
@@ -47,11 +48,10 @@ public class PV204APDU {
             PV204APDU main = new PV204APDU();
             
             main.installPinAndConnect();
-            main.startEcdhSession(pinSecret);
+            main.startEcdhSession(getUserPIN());
             
             System.out.println("\n\n");
             
-            main.demoMarcoPolo();
             main.demoMarcoPolo();
                     
         } catch (Exception ex) {
@@ -72,7 +72,7 @@ public class PV204APDU {
         runCfg.setTestCardType(RunConfig.CARD_TYPE.JCARDSIMLOCAL);
         
         byte[] installCommand = Util.hexStringToByteArray("0a" + APPLET_AID + "00" + PIN_LENGTH);
-        byte[] pin = {(byte) 0x01, (byte) 0x02, (byte) 0x03, (byte) 0x04};
+        byte[] pin = generatePin();
         
         byte[] installData = Util.concat(installCommand, pin);
         runCfg.setInstallData(installData);
@@ -83,8 +83,55 @@ public class PV204APDU {
         }
         System.out.println(" Done.");
         
-        pinSecret = pin;
-
+        printPin(pin);
+    }
+    
+    private static void printPin(byte[] pin) {
+        System.out.print("User PIN: ");
+        for (int i = 0; i < PIN_DIGITS; i++) {
+            System.out.print((char) ('0' + pin[i]));
+        }
+        System.out.println("");
+    }
+    
+    private static byte[] generatePin() {
+        byte[] pin = new byte[PIN_DIGITS];
+        SecureRandom rng = new SecureRandom();
+        rng.nextBytes(pin);
+        
+        for (int i = 0; i < PIN_DIGITS; i++) {
+            pin[i] %= (byte) 10;
+            if (pin[i] < 0) {
+                pin[i] += 10;
+            }
+        }
+                
+        return pin;
+    }
+    
+    private static byte[] getUserPIN() throws IOException {
+        
+        System.in.read(new byte[System.in.available()]);
+        
+        byte[] pin = new byte[PIN_DIGITS];
+        System.out.print("Please enter " + PIN_DIGITS + "-digit PIN: ");
+        
+        try {
+            System.in.read(pin, 0, PIN_DIGITS);
+        } catch (IOException e) {
+            System.out.println("Error reading PIN.");
+            throw e;
+        }
+        
+        for (int i = 0; i < PIN_DIGITS; i++) {
+            pin[i] -= '0';
+            if (pin[i] < 0 || pin[i] > 9) {
+                System.out.println("PIN contains invalid character.");
+                return getUserPIN();
+            }
+        }
+        
+        return pin;
     }
     
     private void startEcdhSession(byte[] pin) throws Exception {
@@ -199,8 +246,10 @@ public class PV204APDU {
         final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
         
         if (response.getSW() == 0x6901) {
-            System.out.println("New session required.");
-            //TODO handle
+            System.out.println("Session needs to be reestablished.");
+            startEcdhSession(getUserPIN());
+            
+            return encryptAndSendAPDU(data, instruction);
         }
         
         return decryptData(response.getData());
@@ -208,28 +257,6 @@ public class PV204APDU {
     
     private byte[] decryptData(byte[] encrypted) throws Exception {
         return aes_decrypt.doFinal(encrypted);
-    }
-    
-    //for debugging
-    public void compareSecretWithCard() throws Exception {
-        
-        //get shared ECDH secret from card
-        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(Util.hexStringToByteArray("B0600000")));
-        byte[] cardEcdhSecret = response.getData();
-        
-        System.out.println("PC   ECDH secret: " + Util.bytesToHex(ecdhSecret));
-        System.out.println("Card ECDH secret: " + Util.bytesToHex(cardEcdhSecret));
-    }
-    
-    //for debugging
-    public void comparePinWithCard() throws Exception {
-        
-        //get PIN from card
-        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(Util.hexStringToByteArray("B0610000")));
-        byte[] cardPin = response.getData();
-        
-        System.out.println("PC   PIN: " + Util.bytesToHex(pinSecret));
-        System.out.println("Card PIN: " + Util.bytesToHex(cardPin));
     }
     
     private byte[] prepareKeyPair(KeyAgreement dh) throws Exception {
