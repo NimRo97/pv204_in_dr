@@ -30,14 +30,17 @@ import javax.smartcardio.ResponseAPDU;
  * Based on work of Petr Svenda (petrs), Dusan Klinec (ph4r05)
  */
 public class PV204APDU {
+    
+    // Constants
     private static final String APPLET_AID = "482871d58ab7465e5e05";
     private static final byte APPLET_AID_BYTE[] = Util.hexStringToByteArray(APPLET_AID);
     
+    // PIN Constants
     private static final String PIN_LENGTH = "04";
     private static final int PIN_DIGITS = 4;
     
+    // Card
     final CardManager cardMngr = new CardManager(true, APPLET_AID_BYTE);
-    byte[] ecdhSecret = null;
     
     Cipher aes_encrypt = null;
     Cipher aes_decrypt = null;
@@ -158,9 +161,9 @@ public class PV204APDU {
         dh.doPhase(cardPublicKey, true);
         byte[] derivedSecret = dh.generateSecret();
         MessageDigest md = MessageDigest.getInstance("SHA");
-        ecdhSecret = md.digest(derivedSecret);
+        byte[] ecdhSecret = md.digest(derivedSecret);
 
-        deriveSessionKey();
+        deriveSessionKey(ecdhSecret);
         
         //create chalenge
         SecureRandom random = new SecureRandom();
@@ -220,7 +223,7 @@ public class PV204APDU {
     }
     
     //derive session key from shared ECDH secret
-    private void deriveSessionKey() throws Exception {
+    private void deriveSessionKey(byte[] ecdhSecret) throws Exception {
         
         MessageDigest md = MessageDigest.getInstance("SHA-256");
         byte[] derived = md.digest(ecdhSecret);
