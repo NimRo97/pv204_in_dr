@@ -206,10 +206,14 @@ public class PV204APDU {
         byte[] encPcEcdhShare = new byte[64];
         byte[] cardEcdhShare = new byte[57];
         byte[] encCardEcdhShare = new byte[64];
-        
+        //create chalenge
+        SecureRandom random = new SecureRandom();
+        byte[] challenge = new byte[31];
+        byte[] encChallenge = new byte[31];
         
         //prompt card to start key exchange via PAKE protocol
         encCardEcdhShare = sendECDHInitCommand();
+        
         cardEcdhShare = decDataByHashPIN(encCardEcdhShare, hashedPIN);
 
         ECPublicKey cardPublicKey = extractCardPublicKey(cardEcdhShare);
@@ -220,23 +224,23 @@ public class PV204APDU {
         byte[] ecdhSecret = md.digest(derivedSecret);
 
         deriveSessionKey(ecdhSecret);
-        
-        //create chalenge
-        SecureRandom random = new SecureRandom();
-        byte[] challenge = new byte[31];
-        byte[] encChallenge;
+           
         random.nextBytes(challenge);
         encChallenge = aes_encrypt.doFinal(challenge);
         
-        byte[] cardChallengeMix = sendECDHChallenge(pcEcdhShare, encChallenge, hashedPIN);
-        byte[] authResponse = authCard(challenge, cardChallengeMix);
         
-        if (authResponse[0] == (byte) 01)
-            System.out.println("Authentication was successful!");
-        else
+        byte[] cardChallengeMix = sendECDHChallenge(pcEcdhShare, encChallenge, hashedPIN);
+        final ResponseAPDU authResponse = authCard(challenge, cardChallengeMix);
+        
+        if (authResponse.getSW() == 0x6900) {
             System.out.println("Authentication FAILED!");
-                    // TODO: auth failure
-        return true;
+            return false;
+        }
+        if (authResponse.getSW() == 0x9000) {
+            System.out.println("Authentication was successful!");
+            return true;
+        }
+        return false;
         
     }
     
@@ -269,9 +273,10 @@ public class PV204APDU {
         aes_decrypt.init(Cipher.DECRYPT_MODE, aesKeySpecDec, ivSpecDec);
     }
     
-    private byte[] authCard(byte[] challenge, byte[] cardChallengeMix) throws Exception {
-        byte[] decMix = aes_decrypt.doFinal(cardChallengeMix);
+    private ResponseAPDU authCard(byte[] challenge, byte[] cardChallengeMix) throws Exception { 
         byte[] incChallenge = new byte[31];
+        
+        byte[] decMix = aes_decrypt.doFinal(cardChallengeMix);
         System.arraycopy(decMix, (short) 0, incChallenge, (short) 0, (short) 31);
         byte[] challengeAns = new byte[31];
         System.arraycopy(decMix, (short) 31, challengeAns, (short) 0, (short) 31);
@@ -281,13 +286,14 @@ public class PV204APDU {
             // TODO: auth failure
         }
 
+
         byte[] encPayload = aes_encrypt.doFinal(incChallenge);
         byte[] command = {(byte) 0xb0, (byte) 0x64, (byte) 0x00, (byte) 0x00, (byte) encPayload.length};
         byte[] sendData = Util.concat(command, encPayload);
 
 
         final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
-        return response.getData();
+        return response;
         
     }
     
