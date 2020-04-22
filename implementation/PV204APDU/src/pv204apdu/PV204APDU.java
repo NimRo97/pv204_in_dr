@@ -33,7 +33,7 @@ public class PV204APDU {
     private static final String PIN_LENGTH = "04";
     
     // Card
-    final CardManager cardMngr = new CardManager(true, APPLET_AID_BYTE);
+    private final CardManager cardMngr = new CardManager(true, APPLET_AID_BYTE);
     
     // Session attributes
     Cipher aes_encrypt = null;
@@ -77,6 +77,10 @@ public class PV204APDU {
                                "but new session is required");
             System.out.println("\nReceived '" + new String(main.loadData()) + "'.");
             
+            System.out.println("\nClosing channel.");
+            main.closeEcdhSession();
+            System.out.println("Channel closed.");
+            
         } catch (Exception ex) {
             System.out.println("Exception: " + ex);
         }
@@ -86,7 +90,7 @@ public class PV204APDU {
      * Installs applet with random PIN
      * @throws Exception 
      */
-    private void installPinAndConnect() throws Exception {
+    public void installPinAndConnect() throws Exception {
         final RunConfig runCfg = RunConfig.getDefaultConfig();
         runCfg.setAppletToSimulate(PV204Applet.class);
         runCfg.setTestCardType(RunConfig.CARD_TYPE.JCARDSIMLOCAL);
@@ -115,7 +119,7 @@ public class PV204APDU {
      * @return data received from the card
      * @throws Exception 
      */
-    private byte[] encryptAndSendAPDU(byte[] data, byte instruction) throws Exception {
+    public byte[] encryptAndSendAPDU(byte[] data, byte instruction) throws Exception {
         
         byte[] encrypted = aes_encrypt.doFinal(data);
         byte[] command = {(byte) 0xb0, instruction, (byte) 0x00, (byte) 0x00,
@@ -150,7 +154,7 @@ public class PV204APDU {
      * 
      * @throws Exception 
      */
-    private void doMarcoPolo() throws Exception {
+    public void doMarcoPolo() throws Exception {
         byte[] marco = {0x6d, 0x61, 0x72, 0x63, 0x6f};
         byte[] response = encryptAndSendAPDU(marco, (byte) 0x70);
             
@@ -164,7 +168,7 @@ public class PV204APDU {
      * @param data data to be stored
      * @throws Exception 
      */
-    private void storeData(byte[] data) throws Exception {
+    public void storeData(byte[] data) throws Exception {
         encryptAndSendAPDU(data, (byte) 0x71);
     }
     
@@ -174,11 +178,11 @@ public class PV204APDU {
      * @return the data previously stored on the card
      * @throws Exception 
      */
-    private byte[] loadData() throws Exception {
+    public byte[] loadData() throws Exception {
         return encryptAndSendAPDU(new byte[0], (byte) 0x72);
     }
     
-    private void startEcdhSession(byte[] pin) throws Exception {
+    public void startEcdhSession(byte[] pin) throws Exception {
 
         byte [] hashedPIN = new byte[16];
         hashedPIN = hashPIN(pin);
@@ -223,6 +227,11 @@ public class PV204APDU {
                     // TODO: auth failure
 
         
+    }
+    
+    public void closeEcdhSession() throws Exception {
+        byte[] sendData = Util.hexStringToByteArray("b065000000");
+        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
     }
     
     /**

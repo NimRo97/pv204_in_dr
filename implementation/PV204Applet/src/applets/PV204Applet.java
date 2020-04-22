@@ -13,6 +13,7 @@ public class PV204Applet extends javacard.framework.Applet {
     final static byte INS_ECDHINIT = (byte) 0x62;
     final static byte INS_SOLVE_CHALLENGE = (byte) 0x63;
     final static byte INS_AUTH_PC = (byte) 0x64;
+    final static byte INS_CLOSE_CHANNEL = (byte) 0x65;
     
     // Instruction over secure channel
     final static byte INS_MARCO = (byte) 0x70;
@@ -155,6 +156,9 @@ public class PV204Applet extends javacard.framework.Applet {
                     case INS_AUTH_PC:
                         ECDHAuthPC(apdu, challenge);
                         break;
+                    case INS_CLOSE_CHANNEL:
+                        closeSecureChannel(apdu);
+                        break;
                         
                     default:
                         processSecuredAPDU(apdu);
@@ -169,6 +173,16 @@ public class PV204Applet extends javacard.framework.Applet {
         } catch (Exception e) {
             ISOException.throwIt(ISO7816.SW_UNKNOWN);
         }
+    }
+    
+    /**
+     * Closes secure channel on explicit command from the PC
+     * 
+     * @param apdu incoming APDU
+     */
+    private void closeSecureChannel(APDU apdu) {
+        clearSessionData();
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) 0);
     }
     
     /**
