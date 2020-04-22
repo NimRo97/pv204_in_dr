@@ -51,9 +51,16 @@ public class PV204APDU {
             
             System.out.println("Installing applet with PIN to card.");
             main.installPinAndConnect();
-            
+            int PINtries = 3;
+
             System.out.println("\nStarting new secure channel session.");
-            main.startEcdhSession(getUserPIN());
+            while ( ! main.startEcdhSession(getUserPIN())) {
+                PINtries -= 1;
+                if (PINtries < 1) {
+                    System.out.println("Card blocked! Aborting");
+                    return;
+                }
+            }
             
             System.out.println("\nCommunicating with the card using secure channel.");
             System.out.println("Marco-Polo:");
@@ -97,6 +104,11 @@ public class PV204APDU {
         
         byte[] installCommand = Util.hexStringToByteArray("0a" + APPLET_AID + "00" + PIN_LENGTH);
         byte[] pin = generatePin();
+        byte[] nullPin = {(byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00};
+
+        while (Arrays.equals(pin, nullPin)) {
+            pin = generatePin();
+        }
         
         byte[] installData = Util.concat(installCommand, pin);
         runCfg.setInstallData(installData);
@@ -106,7 +118,6 @@ public class PV204APDU {
             System.out.println(" Failed.");
         }
         System.out.println(" Done.");
-        
         printPin(pin);
     }
     
@@ -182,7 +193,7 @@ public class PV204APDU {
         return encryptAndSendAPDU(new byte[0], (byte) 0x72);
     }
     
-    public void startEcdhSession(byte[] pin) throws Exception {
+    public boolean startEcdhSession(byte[] pin) throws Exception {
 
         byte [] hashedPIN = new byte[16];
         hashedPIN = hashPIN(pin);
@@ -225,7 +236,7 @@ public class PV204APDU {
         else
             System.out.println("Authentication FAILED!");
                     // TODO: auth failure
-
+        return true;
         
     }
     
@@ -329,5 +340,14 @@ public class PV204APDU {
         cipher.init(Cipher.DECRYPT_MODE, AESKey, new IvParameterSpec(new byte[16]));
         return cipher.doFinal(data);
 
+    }
+    private void abort_PIN(int PINtries) throws Exception {
+        PINtries -= 1;
+        if (PINtries < 1) {
+            System.out.println("Card is blocked!");
+            closeEcdhSession();
+        }
+        else
+        System.out.format("Aborting: incorrect PIN\n%d tries remaining", PINtries);
     }
 }

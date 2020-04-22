@@ -32,6 +32,7 @@ public class PV204Applet extends javacard.framework.Applet {
     // Attributes
     private byte[] m_pin_data = new byte[PIN_LENGTH];
     private OwnerPIN m_pin = null;
+    private byte[] nullPin = null;
     private byte[] hashedPIN = new byte[16];
     private byte[] challenge = new byte[31];
 
@@ -86,7 +87,7 @@ public class PV204Applet extends javacard.framework.Applet {
         
         // copy PIN
         Util.arrayCopyNonAtomic(buffer, (byte) (dataOffset + 1), m_pin_data, (short)0 , PIN_LENGTH);
-        m_pin = new OwnerPIN((byte) 3, (byte) PIN_LENGTH); // 3 tries, 4 digits in pin
+        m_pin = new OwnerPIN((byte) 4, (byte) PIN_LENGTH); // 3 tries, 4 digits in pin
         if (buffer[dataOffset] != (byte) PIN_LENGTH) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
@@ -99,6 +100,8 @@ public class PV204Applet extends javacard.framework.Applet {
         
         m_hash = MessageDigest.getInstance(MessageDigest.ALG_SHA_256, false);
         hashedPIN = hashPIN(m_pin_data);
+        nullPin = new byte[] {(byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00};
+
                 
         // register this instance
         register();
@@ -133,6 +136,9 @@ public class PV204Applet extends javacard.framework.Applet {
      */
     @Override
     public void process(APDU apdu) throws ISOException {
+        // check for blocked card
+        
+            
         // get the buffer with incoming APDU
         byte[] apduBuffer = apdu.getBuffer();
 
@@ -144,9 +150,12 @@ public class PV204Applet extends javacard.framework.Applet {
         try {
             // APDU instruction parser
             if (apduBuffer[ISO7816.OFFSET_CLA] == CLA_PV204_APPLET) {
+                if (m_pin.getTriesRemaining() < (byte) 0x01)
+                    cardBlocked(apdu);
                 switch (apduBuffer[ISO7816.OFFSET_INS]) {
                     
                     case INS_ECDHINIT:
+                        decreasePINtries();
                         dh = KeyAgreement.getInstance(KeyAgreement.ALG_EC_SVDP_DH, false);
                         ECDHInit(apdu, dh);
                         break;
@@ -494,5 +503,19 @@ public class PV204Applet extends javacard.framework.Applet {
         byte[] decrypted = new byte[96];
         cipher.doFinal(data, (short) 0, dataLength, decrypted, (short) 0);
         return decrypted;
+    }
+    
+    private void decreasePINtries() {
+        m_pin.check(nullPin, (short) 0, (byte) PIN_LENGTH);
+    }
+    private void cardBlocked(APDU apdu) {
+        byte[] apdubuf = apdu.getBuffer();
+        apdu.setIncomingAndReceive();
+        
+        // magic bytes for blocked card response
+        byte[] sendData = new byte[] {(byte) 0x00, (byte) 0x00};
+        Util.arrayCopy(sendData, (short) 0, apdubuf, ISO7816.OFFSET_CDATA, (short) 64);
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (2));
+        
     }
 }
