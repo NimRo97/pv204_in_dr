@@ -55,13 +55,34 @@ public class PV204APDU {
         try {
             PV204APDU main = new PV204APDU();
             
+            System.out.println("Installing applet with PIN to card.");
             main.installPinAndConnect();
+            
+            System.out.println("\nStarting new secure channel session.");
             main.startEcdhSession(getUserPIN());
             
-            System.out.println("\n\n");
-            
+            System.out.println("\nCommunicating with the card using secure channel.");
+            System.out.println("Marco-Polo:");
             main.doMarcoPolo();
-                    
+            
+            String secretMessage = "J.E. did not commit suicide. " +
+                                   "Also, the cake is a lie.";
+            System.out.println("\nStoring '" + secretMessage + "' on card...");
+            main.storeData(secretMessage.getBytes());
+            
+            System.out.println("\n...and receiving '" +
+                               new String(main.loadData()) + "' back.");
+            
+            System.out.println("\nNow, Marco-Polo will be performed 17 times " +
+                               "to exhaust the session message limit");
+            for (int i = 0; i < 17; i++) {
+                main.doMarcoPolo();
+            }
+            
+            System.out.println("\nNow, the secret message will be read, " +
+                               "but new session is required");
+            System.out.println("\nReceived '" + new String(main.loadData()) + "'.");
+            
         } catch (Exception ex) {
             System.out.println("Exception: " + ex);
         }
@@ -200,7 +221,28 @@ public class PV204APDU {
         byte[] marco = {0x6d, 0x61, 0x72, 0x63, 0x6f};
         byte[] response = encryptAndSendAPDU(marco, (byte) 0x70);
             
-        System.out.println(Util.bytesToHex(response));
+        System.out.println("Received '" + Util.bytesToHex(response) +
+                           "', which is 'polo' in ASCII.");
+    }
+    
+    /**
+     * Performs sending of data securely to the card
+     * 
+     * @param data data to be stored
+     * @throws Exception 
+     */
+    private void storeData(byte[] data) throws Exception {
+        encryptAndSendAPDU(data, (byte) 0x71);
+    }
+    
+    /**
+     * Gets data previously stored on the card
+     * 
+     * @return the data previously stored on the card
+     * @throws Exception 
+     */
+    private byte[] loadData() throws Exception {
+        return encryptAndSendAPDU(new byte[0], (byte) 0x72);
     }
     
     private void startEcdhSession(byte[] pin) throws Exception {
@@ -319,7 +361,13 @@ public class PV204APDU {
         return encodeEcPublicKey((ECPublicKey) keyPair.getPublic());
     }
     
-    private byte[] encodeEcPublicKey(ECPublicKey key) {
+    /**
+     * Encodes EC public key in ANSI X9.62 format
+     * 
+     * @param key EC public key
+     * @return ANSI X9.62 encoding of the provided key
+     */
+    private static byte[] encodeEcPublicKey(ECPublicKey key) {
         ECPoint w = key.getW();
         byte[] affineX = w.getAffineX().toByteArray();
         byte[] affineY = w.getAffineY().toByteArray();
@@ -333,7 +381,14 @@ public class PV204APDU {
         return x962encoded;
     }
     
-    private ECPublicKey extractCardPublicKey(byte[] cardEcdhShare) throws Exception {
+    /**
+     * Creates EC public key from ANSI X9.62 encoded representation
+     * 
+     * @param cardEcdhShare ANSI X9.62 encoded public key
+     * @return EC public key
+     * @throws Exception 
+     */
+    private static ECPublicKey extractCardPublicKey(byte[] cardEcdhShare) throws Exception {
         byte[] cardX = new byte[28];
         byte[] cardY = new byte[28];
 
@@ -351,7 +406,13 @@ public class PV204APDU {
         return (ECPublicKey) KeyFactory.getInstance("EC").generatePublic(ecPkeySpec);
     }
     
-    private KeyPair getRandomEcKeyPair() throws Exception {
+    /**
+     * Generates and returns random EC keypair
+     * 
+     * @return random EC keypair
+     * @throws Exception 
+     */
+    private static KeyPair getRandomEcKeyPair() throws Exception {
         KeyPairGenerator keyGen = KeyPairGenerator.getInstance("EC");
         keyGen.initialize(new ECGenParameterSpec ("secp224r1"));
         return keyGen.generateKeyPair();

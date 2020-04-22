@@ -1,6 +1,5 @@
 package applets;
 
-//import java.util.Arrays;
 import javacard.framework.*;
 import javacard.security.*;
 import javacardx.crypto.*;
@@ -17,6 +16,8 @@ public class PV204Applet extends javacard.framework.Applet {
     
     // Instruction over secure channel
     final static byte INS_MARCO = (byte) 0x70;
+    final static byte INS_STORE = (byte) 0x71;
+    final static byte INS_LOAD  = (byte) 0x72;
 
     // Constants
     final static byte AES_BLOCK_LENGTH = (short) 0x16;
@@ -45,6 +46,9 @@ public class PV204Applet extends javacard.framework.Applet {
     
     // Transient session message counter
     private byte m_sessionCounter[] = null;
+    
+    // Local storage
+    private byte m_data[] = null;
     
     /**
      * Method for installing the applet.
@@ -195,6 +199,12 @@ public class PV204Applet extends javacard.framework.Applet {
                     case INS_MARCO:
                         dataLen = marcoPolo(apdu, dataLen);
                         break;
+                    case INS_STORE:
+                        dataLen = storeData(apdu, dataLen);
+                        break;
+                    case INS_LOAD:
+                        dataLen = loadData(apdu, dataLen);
+                        break;
                     default:
                         ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
                         break;
@@ -273,9 +283,47 @@ public class PV204Applet extends javacard.framework.Applet {
             ISOException.throwIt(ISO7816.SW_WRONG_DATA);
         }
 
-        Util.arrayCopy(polo, (short) 0, apdubuf, ISO7816.OFFSET_CDATA, (short) polo.length);
+        Util.arrayCopyNonAtomic(polo, (short) 0, apdubuf, ISO7816.OFFSET_CDATA, (short) polo.length);
         
         return (short) polo.length;
+    }
+    
+    /**
+     * Stores data on the card. Unencrypted, just for demo purposes.
+     * 
+     * @param apdu incoming decrypted APDU
+     * @param dataLen length of the decrypted incoming data
+     * @return 0 to respond with no data
+     * @throws ISOException 
+     */
+    private short storeData(APDU apdu, short dataLen) throws ISOException {
+        
+        byte[] apdubuf = apdu.getBuffer();
+        
+        m_data = new byte[dataLen];
+        Util.arrayCopyNonAtomic(apdubuf, ISO7816.OFFSET_CDATA, m_data, (short) 0, dataLen);
+        
+        return 0;
+    }
+    
+    /**
+     * 
+     * @param apdu incoming decrypted APDU
+     * @param dataLen length of the decrypted incoming data, should be zero
+     * @return length of the unencrypted outgoing data
+     * @throws ISOException 
+     */
+    private short loadData(APDU apdu, short dataLen) throws ISOException {
+        
+        if (dataLen != 0) {
+            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+        }
+        
+        byte[] apdubuf = apdu.getBuffer();
+        
+        Util.arrayCopyNonAtomic(m_data, (short) 0, apdubuf, ISO7816.OFFSET_CDATA, (short) m_data.length);
+        
+        return (short) m_data.length;
     }
 
     /**
