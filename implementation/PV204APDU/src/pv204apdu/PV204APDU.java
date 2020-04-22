@@ -245,14 +245,17 @@ public class PV204APDU {
         MessageDigest md = MessageDigest.getInstance("SHA-256");
         byte[] derived = md.digest(ecdhSecret);
         
-        SecretKeySpec aesKeySpec = new SecretKeySpec(derived, 0, 16, "AES");
-        IvParameterSpec ivSpec = new IvParameterSpec(derived, 16, 16);
+        SecretKeySpec aesKeySpecEnc = new SecretKeySpec(derived, 0, 16, "AES");
+        IvParameterSpec ivSpecEnc = new IvParameterSpec(derived, 16, 16);
+        
+        SecretKeySpec aesKeySpecDec = new SecretKeySpec(derived, 16, 16, "AES");
+        IvParameterSpec ivSpecDec = new IvParameterSpec(derived, 0, 16);
         
         aes_encrypt = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        aes_encrypt.init(Cipher.ENCRYPT_MODE, aesKeySpec, ivSpec);
+        aes_encrypt.init(Cipher.ENCRYPT_MODE, aesKeySpecEnc, ivSpecEnc);
         
         aes_decrypt = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        aes_decrypt.init(Cipher.DECRYPT_MODE, aesKeySpec, ivSpec);
+        aes_decrypt.init(Cipher.DECRYPT_MODE, aesKeySpecDec, ivSpecDec);
     }
     
     private byte[] authCard(byte[] challenge, byte[] cardChallengeMix) throws Exception {

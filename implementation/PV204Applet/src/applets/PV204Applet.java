@@ -442,9 +442,10 @@ public class PV204Applet extends javacard.framework.Applet {
         
         m_hash.doFinal(ecdh_secret, (short) 0, (short) ecdh_secret.length, m_ramArray, (short) 0);
         
-        m_aes_key.setKey(m_ramArray, (short) 0);
+        m_aes_key.setKey(m_ramArray, (short) 16);
+        m_aes_encrypt.init(m_aes_key, Cipher.MODE_ENCRYPT, m_ramArray, (short) 0, (short) 16);
         
-        m_aes_encrypt.init(m_aes_key, Cipher.MODE_ENCRYPT, m_ramArray, (short) 16, (short) 16);
+        m_aes_key.setKey(m_ramArray, (short) 0);
         m_aes_decrypt.init(m_aes_key, Cipher.MODE_DECRYPT, m_ramArray, (short) 16, (short) 16);
         
         m_sessionCounter[0] = (byte) 20;
