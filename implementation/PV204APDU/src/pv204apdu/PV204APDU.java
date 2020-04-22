@@ -49,9 +49,7 @@ public class PV204APDU {
             main.installPinAndConnect();
             main.startEcdhSession(pinSecret);
             
-            System.out.println("\nControl of the correctness of the PIN and ECDH Secret:");
-            main.compareSecretWithCard();
-            main.comparePinWithCard();
+            System.out.println("\n\n");
             
             main.demoMarcoPolo();
             main.demoMarcoPolo();
