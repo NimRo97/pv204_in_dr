@@ -42,10 +42,15 @@ public class PV204APDU {
     // Card
     final CardManager cardMngr = new CardManager(true, APPLET_AID_BYTE);
     
+    // Session attributes
     Cipher aes_encrypt = null;
     Cipher aes_decrypt = null;
     
-        
+    
+/**
+ * Main program to showcase the secure channel implementation
+ * @param args should be empty
+ */    
     public static void main(String[] args) {
         try {
             PV204APDU main = new PV204APDU();
@@ -55,20 +60,17 @@ public class PV204APDU {
             
             System.out.println("\n\n");
             
-            main.demoMarcoPolo();
+            main.doMarcoPolo();
                     
         } catch (Exception ex) {
             System.out.println("Exception: " + ex);
         }
     }
     
-    private void demoMarcoPolo() throws Exception {
-        byte[] marco = {0x6d, 0x61, 0x72, 0x63, 0x6f};
-        byte[] response = encryptAndSendAPDU(marco, (byte) 0x70);
-            
-        System.out.println(Util.bytesToHex(response));
-    }
-    
+    /**
+     * Installs applet with random PIN
+     * @throws Exception 
+     */
     private void installPinAndConnect() throws Exception {
         final RunConfig runCfg = RunConfig.getDefaultConfig();
         runCfg.setAppletToSimulate(PV204Applet.class);
@@ -89,6 +91,10 @@ public class PV204APDU {
         printPin(pin);
     }
     
+    /**
+     * Prints PIN to user
+     * @param pin PIN
+     */
     private static void printPin(byte[] pin) {
         System.out.print("User PIN: ");
         for (int i = 0; i < PIN_DIGITS; i++) {
@@ -97,6 +103,10 @@ public class PV204APDU {
         System.out.println("");
     }
     
+    /**
+     * Generates random PIN
+     * @return PIN array
+     */
     private static byte[] generatePin() {
         byte[] pin = new byte[PIN_DIGITS];
         SecureRandom rng = new SecureRandom();
@@ -112,6 +122,11 @@ public class PV204APDU {
         return pin;
     }
     
+    /**
+     * Gets PIN from user
+     * @return PIN array
+     * @throws IOException in case of IO failure
+     */
     private static byte[] getUserPIN() throws IOException {
         
         System.in.read(new byte[System.in.available()]);
@@ -135,6 +150,57 @@ public class PV204APDU {
         }
         
         return pin;
+    }
+    
+    /**
+     * Wrapper method to create and send encrypted APDU using secure channel
+     * and receive response from the card
+     * 
+     * @param data data to be sent to the card
+     * @param instruction instruction byte for the card
+     * @return data received from the card
+     * @throws Exception 
+     */
+    private byte[] encryptAndSendAPDU(byte[] data, byte instruction) throws Exception {
+        
+        byte[] encrypted = aes_encrypt.doFinal(data);
+        byte[] command = {(byte) 0xb0, instruction, (byte) 0x00, (byte) 0x00,
+                          (byte) encrypted.length};
+        byte[] sendData = Util.concat(command, encrypted);
+        
+        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
+        
+        if (response.getSW() == 0x6901) {
+            System.out.println("Session needs to be reestablished.");
+            startEcdhSession(getUserPIN());
+            
+            return encryptAndSendAPDU(data, instruction);
+        }
+        
+        return decryptData(response.getData());
+    }
+    
+    /**
+     * Decrypts data received using secure channel
+     * 
+     * @param encrypted encrypted data
+     * @return decrypted data
+     * @throws Exception 
+     */
+    private byte[] decryptData(byte[] encrypted) throws Exception {
+        return aes_decrypt.doFinal(encrypted);
+    }
+    
+    /**
+     * Does Marco-Polo with the card
+     * 
+     * @throws Exception 
+     */
+    private void doMarcoPolo() throws Exception {
+        byte[] marco = {0x6d, 0x61, 0x72, 0x63, 0x6f};
+        byte[] response = encryptAndSendAPDU(marco, (byte) 0x70);
+            
+        System.out.println(Util.bytesToHex(response));
     }
     
     private void startEcdhSession(byte[] pin) throws Exception {
@@ -183,6 +249,28 @@ public class PV204APDU {
 
         
     }
+    
+    /**
+     * Derives session key from shared ECDH secret
+     * 
+     * @param ecdhSecret shared ECDH secret
+     * @throws Exception 
+     */
+    private void deriveSessionKey(byte[] ecdhSecret) throws Exception {
+        
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        byte[] derived = md.digest(ecdhSecret);
+        
+        SecretKeySpec aesKeySpec = new SecretKeySpec(derived, 0, 16, "AES");
+        IvParameterSpec ivSpec = new IvParameterSpec(derived, 16, 16);
+        
+        aes_encrypt = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        aes_encrypt.init(Cipher.ENCRYPT_MODE, aesKeySpec, ivSpec);
+        
+        aes_decrypt = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        aes_decrypt.init(Cipher.DECRYPT_MODE, aesKeySpec, ivSpec);
+    }
+    
     private byte[] authCard(byte[] challenge, byte[] cardChallengeMix) throws Exception {
         byte[] decMix = aes_decrypt.doFinal(cardChallengeMix);
         byte[] incChallenge = new byte[31];
@@ -204,6 +292,7 @@ public class PV204APDU {
         return response.getData();
         
     }
+    
     private byte[] sendECDHInitCommand() throws Exception {
         byte[] command = {(byte) 0xb0, (byte) 0x62, (byte) 0x00, (byte) 0x00};
         
@@ -220,46 +309,6 @@ public class PV204APDU {
         
         final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
         return response.getData();
-    }
-    
-    //derive session key from shared ECDH secret
-    private void deriveSessionKey(byte[] ecdhSecret) throws Exception {
-        
-        MessageDigest md = MessageDigest.getInstance("SHA-256");
-        byte[] derived = md.digest(ecdhSecret);
-        
-        SecretKeySpec aesKeySpec = new SecretKeySpec(derived, 0, 16, "AES");
-        IvParameterSpec ivSpec = new IvParameterSpec(derived, 16, 16);
-        
-        aes_encrypt = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        aes_encrypt.init(Cipher.ENCRYPT_MODE, aesKeySpec, ivSpec);
-        
-        aes_decrypt = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        aes_decrypt.init(Cipher.DECRYPT_MODE, aesKeySpec, ivSpec);
-    }
-    
-    private byte[] encryptAndSendAPDU(byte[] data, byte instruction) throws Exception {
-        
-        byte[] encrypted = aes_encrypt.doFinal(data);
-        
-        byte[] command = {(byte) 0xb0, instruction, (byte) 0x00, (byte) 0x00,
-                          (byte) encrypted.length};
-        byte[] sendData = Util.concat(command, encrypted);
-        
-        final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
-        
-        if (response.getSW() == 0x6901) {
-            System.out.println("Session needs to be reestablished.");
-            startEcdhSession(getUserPIN());
-            
-            return encryptAndSendAPDU(data, instruction);
-        }
-        
-        return decryptData(response.getData());
-    }
-    
-    private byte[] decryptData(byte[] encrypted) throws Exception {
-        return aes_decrypt.doFinal(encrypted);
     }
     
     private byte[] prepareKeyPair(KeyAgreement dh) throws Exception {
