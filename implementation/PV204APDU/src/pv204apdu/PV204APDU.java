@@ -138,7 +138,8 @@ public class PV204APDU {
         byte[] sendData = Util.concat(command, encrypted);
         
         final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
-        
+        if (response.getSW() == 0x6902)
+            System.out.println("Card is blocked! Aborting...");
         if (response.getSW() == 0x6901) {
             System.out.println("Session needs to be reestablished.");
             startEcdhSession(getUserPIN());
@@ -210,29 +211,40 @@ public class PV204APDU {
         SecureRandom random = new SecureRandom();
         byte[] challenge = new byte[31];
         byte[] encChallenge = new byte[31];
+        ECPublicKey cardPublicKey;
+        byte[] derivedSecret;
+        MessageDigest md;
+        byte[] ecdhSecret;
+        byte[] cardChallengeMix;
+        ResponseAPDU authResponse;
         
         //prompt card to start key exchange via PAKE protocol
         encCardEcdhShare = sendECDHInitCommand();
         
-        cardEcdhShare = decDataByHashPIN(encCardEcdhShare, hashedPIN);
+        try {
+            cardEcdhShare = decDataByHashPIN(encCardEcdhShare, hashedPIN);
+            cardPublicKey = extractCardPublicKey(cardEcdhShare);
 
-        ECPublicKey cardPublicKey = extractCardPublicKey(cardEcdhShare);
+            dh.doPhase(cardPublicKey, true);
+            derivedSecret = dh.generateSecret();
+            md = MessageDigest.getInstance("SHA");
+            ecdhSecret = md.digest(derivedSecret);
 
-        dh.doPhase(cardPublicKey, true);
-        byte[] derivedSecret = dh.generateSecret();
-        MessageDigest md = MessageDigest.getInstance("SHA");
-        byte[] ecdhSecret = md.digest(derivedSecret);
+            deriveSessionKey(ecdhSecret);
 
-        deriveSessionKey(ecdhSecret);
-           
-        random.nextBytes(challenge);
-        encChallenge = aes_encrypt.doFinal(challenge);
+            random.nextBytes(challenge);
+            encChallenge = aes_encrypt.doFinal(challenge);
+
+            cardChallengeMix = sendECDHChallenge(pcEcdhShare, encChallenge, hashedPIN);
+            authResponse = authCard(challenge, cardChallengeMix);
+        }
+        catch (Exception e) {
+            System.out.println("Authentication FAILED!");
+            return false;
+        }
+
         
-        
-        byte[] cardChallengeMix = sendECDHChallenge(pcEcdhShare, encChallenge, hashedPIN);
-        final ResponseAPDU authResponse = authCard(challenge, cardChallengeMix);
-        
-        if (authResponse.getSW() == 0x6900) {
+        if (authResponse == null || authResponse.getSW() == 0x6900) {
             System.out.println("Authentication FAILED!");
             return false;
         }
@@ -301,6 +313,8 @@ public class PV204APDU {
         byte[] command = {(byte) 0xb0, (byte) 0x62, (byte) 0x00, (byte) 0x00};
         
         final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(command));
+        if (response.getSW() == 0x6902)
+            System.out.println("Card is blocked! Aborting...");
         return response.getData();
     }
     
