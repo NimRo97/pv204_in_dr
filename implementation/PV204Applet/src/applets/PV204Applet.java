@@ -13,6 +13,7 @@ public class PV204Applet extends javacard.framework.Applet {
     final static byte INS_ECDHINIT = (byte) 0x62;
     final static byte INS_SOLVE_CHALLENGE = (byte) 0x63;
     final static byte INS_AUTH_PC = (byte) 0x64;
+    final static byte INS_CLOSE_CHANNEL = (byte) 0x65;
     
     // Instruction over secure channel
     final static byte INS_MARCO = (byte) 0x70;
@@ -27,10 +28,12 @@ public class PV204Applet extends javacard.framework.Applet {
     // Error codes
     final static short SW_BAD_PIN = (short) 0x6900;
     final static short SW_NEW_SESSION_REQUIRED = (short) 0x6901;
+    final static short SW_CARD_BLOCKED = (short) 0x6902;
     
     // Attributes
     private byte[] m_pin_data = new byte[PIN_LENGTH];
     private OwnerPIN m_pin = null;
+    private byte[] nullPin = null;
     private byte[] hashedPIN = new byte[16];
     private byte[] challenge = new byte[31];
 
@@ -82,10 +85,10 @@ public class PV204Applet extends javacard.framework.Applet {
         m_ramArray = JCSystem.makeTransientByteArray(ARRAY_LENGTH, JCSystem.CLEAR_ON_RESET);
         m_sessionCounter = JCSystem.makeTransientByteArray((short) 1, JCSystem.CLEAR_ON_RESET);
         m_sessionCounter[0] = (byte) 0;
-        
+               
         // copy PIN
         Util.arrayCopyNonAtomic(buffer, (byte) (dataOffset + 1), m_pin_data, (short)0 , PIN_LENGTH);
-        m_pin = new OwnerPIN((byte) 3, (byte) PIN_LENGTH); // 3 tries, 4 digits in pin
+        m_pin = new OwnerPIN((byte) 4, (byte) PIN_LENGTH); // 3 tries, 4 digits in pin
         if (buffer[dataOffset] != (byte) PIN_LENGTH) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
@@ -98,6 +101,8 @@ public class PV204Applet extends javacard.framework.Applet {
         
         m_hash = MessageDigest.getInstance(MessageDigest.ALG_SHA_256, false);
         hashedPIN = hashPIN(m_pin_data);
+        nullPin = new byte[] {(byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00};
+
                 
         // register this instance
         register();
@@ -132,6 +137,9 @@ public class PV204Applet extends javacard.framework.Applet {
      */
     @Override
     public void process(APDU apdu) throws ISOException {
+        // check for blocked card
+        
+            
         // get the buffer with incoming APDU
         byte[] apduBuffer = apdu.getBuffer();
 
@@ -143,9 +151,12 @@ public class PV204Applet extends javacard.framework.Applet {
         try {
             // APDU instruction parser
             if (apduBuffer[ISO7816.OFFSET_CLA] == CLA_PV204_APPLET) {
+                if (m_pin.getTriesRemaining() < (byte) 0x01)
+                    cardBlocked(apdu);
                 switch (apduBuffer[ISO7816.OFFSET_INS]) {
                     
                     case INS_ECDHINIT:
+                        m_pin.check(nullPin, (short) 0, (byte) PIN_LENGTH);
                         dh = KeyAgreement.getInstance(KeyAgreement.ALG_EC_SVDP_DH, false);
                         ECDHInit(apdu, dh);
                         break;
@@ -154,6 +165,9 @@ public class PV204Applet extends javacard.framework.Applet {
                         break;
                     case INS_AUTH_PC:
                         ECDHAuthPC(apdu, challenge);
+                        break;
+                    case INS_CLOSE_CHANNEL:
+                        closeSecureChannel(apdu);
                         break;
                         
                     default:
@@ -169,6 +183,16 @@ public class PV204Applet extends javacard.framework.Applet {
         } catch (Exception e) {
             ISOException.throwIt(ISO7816.SW_UNKNOWN);
         }
+    }
+    
+    /**
+     * Closes secure channel on explicit command from the PC
+     * 
+     * @param apdu incoming APDU
+     */
+    private void closeSecureChannel(APDU apdu) {
+        clearSessionData();
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) 0);
     }
     
     /**
@@ -370,23 +394,35 @@ public class PV204Applet extends javacard.framework.Applet {
         byte[] recData = new byte[dataLen];
         Util.arrayCopy(apdubuf, ISO7816.OFFSET_CDATA, recData, (short) 0, dataLen);
 
-        byte[] decryptedData = decDataByHashPIN(recData, hashedPIN, (short) recData.length);
+        byte[] decryptedData;
         byte[] pc_ecdh_share = new byte[59];
-        Util.arrayCopy(decryptedData, (short) 0, pc_ecdh_share, (short) 0, (short) 59);
         byte[] ecdh_secret = new byte[20];
-        dh.generateSecret(pc_ecdh_share, (short) 0, (short) pc_ecdh_share.length, ecdh_secret, (byte) 0);
-        deriveSessionKey(ecdh_secret);
-        
         byte[] encPcChallenge = new byte[32];
         byte [] pcChallenge = new byte[32];
-        Util.arrayCopy(decryptedData, (short) 59, encPcChallenge, (short) 0, (short) 32);
-
-        m_aes_decrypt.doFinal(encPcChallenge, (short) 0, (short) 32, pcChallenge, (short) 0);
-        //System.out.printf("aplet:: pc challenge: %s\n", cardTools.Util.toHex(pcChallenge), pcChallenge.length);
+        byte[] sendData = new byte[64];
         
         RandomData random = RandomData.getInstance(RandomData.ALG_TRNG);
+        
+        // there is a chance of failing when pin is incorrect
+        try {
+            decryptedData = decDataByHashPIN(recData, hashedPIN, (short) recData.length);
+            Util.arrayCopy(decryptedData, (short) 0, pc_ecdh_share, (short) 0, (short) 59);
+        
+            dh.generateSecret(pc_ecdh_share, (short) 0, (short) pc_ecdh_share.length, ecdh_secret, (byte) 0);
+            deriveSessionKey(ecdh_secret);
+        
+            Util.arrayCopy(decryptedData, (short) 59, encPcChallenge, (short) 0, (short) 32);
+
+        }
+        catch(Exception e) {
+            wrongPIN(apdu, apdubuf);
+            return;
+        }
+      
+        m_aes_decrypt.doFinal(encPcChallenge, (short) 0, (short) 32, pcChallenge, (short) 0);
+        
         random.nextBytes(challenge, (short) 0, (short) 31);
-        byte[] sendData = new byte[64];
+        
         Util.arrayCopy(challenge, (short) 0, sendData, (short) 0, (short) 31);
         Util.arrayCopy(pcChallenge, (short) 0, sendData, (short) 31, (short) 31);
         sendData[63] = (byte) 02; // pkcs5 padding
@@ -406,17 +442,22 @@ public class PV204Applet extends javacard.framework.Applet {
         Util.arrayCopy(apdubuf, ISO7816.OFFSET_CDATA, recData, (short) 0, dataLen);
         
         byte[] solvedChallenge = new byte[32];
-        m_aes_decrypt.doFinal(recData, (short) 0, (short) 32, solvedChallenge, (short) 0);
-        if (Util.arrayCompare(challenge, (short) 0, solvedChallenge, (short) 0, (short) 31) == 0)
-            apdubuf[ISO7816.OFFSET_CDATA] = (byte) 01;
-        else {
-            apdubuf[ISO7816.OFFSET_CDATA] = (byte) 01;
-            System.out.println("Auth of PC failed on card!");
-            // TODO: auth failed
+        try {
+            m_aes_decrypt.doFinal(recData, (short) 0, (short) 32, solvedChallenge, (short) 0);
         }
-        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (1));
-            
+        catch (Exception e){
+            wrongPIN(apdu, apdubuf);
+            return;
+        }
         
+        if (Util.arrayCompare(challenge, (short) 0, solvedChallenge, (short) 0, (short) 31) == 0) {
+            apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (0));
+            m_sessionCounter[0] = (byte) 20; //allow secure communication
+            m_pin.reset();
+        }
+        else {
+            wrongPIN(apdu, apdubuf);
+        }  
     }
     
     /**
@@ -428,12 +469,13 @@ public class PV204Applet extends javacard.framework.Applet {
         
         m_hash.doFinal(ecdh_secret, (short) 0, (short) ecdh_secret.length, m_ramArray, (short) 0);
         
-        m_aes_key.setKey(m_ramArray, (short) 0);
+        m_aes_key.setKey(m_ramArray, (short) 16);
+        m_aes_encrypt.init(m_aes_key, Cipher.MODE_ENCRYPT, m_ramArray, (short) 0, (short) 16);
         
-        m_aes_encrypt.init(m_aes_key, Cipher.MODE_ENCRYPT, m_ramArray, (short) 16, (short) 16);
+        m_aes_key.setKey(m_ramArray, (short) 0);
         m_aes_decrypt.init(m_aes_key, Cipher.MODE_DECRYPT, m_ramArray, (short) 16, (short) 16);
         
-        m_sessionCounter[0] = (byte) 20;
+        
     }
     
     private byte[] hashPIN(byte[] pin) throws ISOException {
@@ -479,5 +521,12 @@ public class PV204Applet extends javacard.framework.Applet {
         byte[] decrypted = new byte[96];
         cipher.doFinal(data, (short) 0, dataLength, decrypted, (short) 0);
         return decrypted;
+    }
+    
+    private void cardBlocked(APDU apdu) {
+        ISOException.throwIt(SW_CARD_BLOCKED);    
+    }
+    private void wrongPIN(APDU apdu, byte[] apdubuf) {
+        ISOException.throwIt(SW_BAD_PIN);
     }
 }
