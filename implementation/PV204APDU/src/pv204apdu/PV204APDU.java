@@ -38,6 +38,7 @@ public class PV204APDU {
     // Session attributes
     Cipher aes_encrypt = null;
     Cipher aes_decrypt = null;
+    static int PINtries = 3;
     
     
     /**
@@ -51,15 +52,16 @@ public class PV204APDU {
             
             System.out.println("Installing applet with PIN to card.");
             main.installPinAndConnect();
-            int PINtries = 3;
+            
 
             System.out.println("\nStarting new secure channel session.");
             while ( ! main.startEcdhSession(getUserPIN())) {
-                PINtries -= 1;
+                /*
                 if (PINtries < 1) {
                     System.out.println("Card blocked! Aborting");
                     return;
                 }
+                */
             }
             
             System.out.println("\nCommunicating with the card using secure channel.");
@@ -138,12 +140,8 @@ public class PV204APDU {
         byte[] sendData = Util.concat(command, encrypted);
         
         final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(sendData));
-        if (response.getSW() == 0x6902)
-            System.out.println("Card is blocked! Aborting...");
-        if (response.getSW() == 0x6901) {
-            System.out.println("Session needs to be reestablished.");
+        while (checkSWresponse(PINtries, response.getSW())) {
             startEcdhSession(getUserPIN());
-            
             return encryptAndSendAPDU(data, instruction);
         }
         
@@ -239,17 +237,15 @@ public class PV204APDU {
             authResponse = authCard(challenge, cardChallengeMix);
         }
         catch (Exception e) {
-            System.out.println("Authentication FAILED!");
+            checkSWresponse(PINtries, 0x6900);
             return false;
         }
-
+     
+        checkSWresponse(PINtries, authResponse.getSW());
         
-        if (authResponse == null || authResponse.getSW() == 0x6900) {
-            System.out.println("Authentication FAILED!");
-            return false;
-        }
         if (authResponse.getSW() == 0x9000) {
             System.out.println("Authentication was successful!");
+            PINtries = 3;
             return true;
         }
         return false;
@@ -313,6 +309,7 @@ public class PV204APDU {
         byte[] command = {(byte) 0xb0, (byte) 0x62, (byte) 0x00, (byte) 0x00};
         
         final ResponseAPDU response = cardMngr.transmit(new CommandAPDU(command));
+        PINtries --;
         if (response.getSW() == 0x6902)
             System.out.println("Card is blocked! Aborting...");
         return response.getData();
@@ -361,13 +358,21 @@ public class PV204APDU {
         return cipher.doFinal(data);
 
     }
-    private void abort_PIN(int PINtries) throws Exception {
-        PINtries -= 1;
-        if (PINtries < 1) {
-            System.out.println("Card is blocked!");
-            closeEcdhSession();
+    private boolean checkSWresponse(int PINtries, int response) throws Exception {
+        
+        switch (response) {
+            case 0x6900:
+                System.out.format("Aborting: incorrect PIN\n%d tries remaining\n", PINtries);
+                return true;
+            case 0x6901:
+                System.out.println("Session needs to be reestablished.");
+                return true;
+            case 0x6902:
+                System.out.println("Card is blocked! Aborting...");
+                closeEcdhSession();
+                return false;
+            default:
+                return false; // probably success
         }
-        else
-        System.out.format("Aborting: incorrect PIN\n%d tries remaining", PINtries);
     }
 }
