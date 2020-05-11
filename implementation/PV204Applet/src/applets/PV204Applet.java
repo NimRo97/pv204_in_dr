@@ -39,6 +39,7 @@ public class PV204Applet extends javacard.framework.Applet {
     private byte[] nullPin = null;
     private byte[] hashedPIN = new byte[16];
     private byte[] challenge = new byte[31];
+    private short statusVar;
 
     private AESKey m_aes_key = null;
     private Cipher m_aes_encrypt = null;
@@ -91,7 +92,7 @@ public class PV204Applet extends javacard.framework.Applet {
                
         // copy PIN
         Util.arrayCopyNonAtomic(buffer, (byte) (dataOffset + 1), m_pin_data, (short)0 , PIN_LENGTH);
-        m_pin = new OwnerPIN((byte) 4, (byte) PIN_LENGTH); // 3 tries, 4 digits in pin
+        m_pin = new OwnerPIN((byte) 3, (byte) PIN_LENGTH); // 3 tries, 4 digits in pin
         if (buffer[dataOffset] != (byte) PIN_LENGTH) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
@@ -105,6 +106,7 @@ public class PV204Applet extends javacard.framework.Applet {
         m_hash = MessageDigest.getInstance(MessageDigest.ALG_SHA_256, false);
         hashedPIN = hashPIN(m_pin_data);
         nullPin = new byte[] {(byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00};
+        statusVar = 0;
 
                 
         // register this instance
@@ -159,12 +161,23 @@ public class PV204Applet extends javacard.framework.Applet {
                         m_pin.check(nullPin, (short) 0, (byte) PIN_LENGTH);
                         dh = KeyAgreement.getInstance(KeyAgreement.ALG_EC_SVDP_DH, false);
                         ECDHInit(apdu, dh);
+                        statusVar = 15;
                         break;
                     case INS_SOLVE_CHALLENGE:
+                        if (statusVar != 15)
+                            break;
                         ECDHSolveChallenge(apdu, dh);
+                        statusVar = 240;
                         break;
                     case INS_AUTH_PC:
-                        ECDHAuthPC(apdu, challenge);
+                        if (statusVar != 240)
+                            break;
+                        if (ECDHAuthPC(apdu, challenge)) {
+                            m_sessionCounter[0] = (byte) 20; //allow secure communication
+                            m_pin.reset();
+                        }
+                            
+                        statusVar = 0;
                         break;
                     case INS_CLOSE_CHANNEL:
                         closeSecureChannel(apdu);
@@ -431,7 +444,7 @@ public class PV204Applet extends javacard.framework.Applet {
         apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (64));
     }
     
-    private void ECDHAuthPC(APDU apdu, byte[] challenge) {
+    private boolean ECDHAuthPC(APDU apdu, byte[] challenge) {
         byte[] apdubuf = apdu.getBuffer();
         short dataLen = apdu.setIncomingAndReceive();
         
@@ -444,16 +457,16 @@ public class PV204Applet extends javacard.framework.Applet {
         }
         catch (Exception e){
             wrongPIN(apdu, apdubuf);
-            return;
+            return false;
         }
         
         if (Util.arrayCompare(challenge, (short) 0, solvedChallenge, (short) 0, (short) 31) == 0) {
-            apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (0));
-            m_sessionCounter[0] = (byte) 20; //allow secure communication
-            m_pin.reset();
+            apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) (0));   
+            return true;
         }
         else {
             wrongPIN(apdu, apdubuf);
+            return false;
         }  
     }
     
